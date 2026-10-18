@@ -1,0 +1,13 @@
+[package]
+name = "sol_text"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+[dependencies]
+sol_util = { path = "../util" }
+owned_ttf_parser = "0.25"
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+rustybuzz = "0.20"
+unicode-bidi = "0.3"
+unicode-script = "0.5"
+unicode-segmentation = "1"

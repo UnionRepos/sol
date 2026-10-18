@@ -1,0 +1,15 @@
+[package]
+name = "sol_paint"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+[dependencies]
+sol_util = { path = "../util" }
+sol_dom = { path = "../dom" }
+sol_css = { path = "../css" }
+sol_layout = { path = "../layout" }
+sol_text = { path = "../text" }
+sol_img = { path = "../img" }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+[dev-dependencies]
+sol_html = { path = "../html" }

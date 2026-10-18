@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><title>sol demo</title>
+<style>
+  body { font-family: sans-serif; background: #f6f7f9; margin: 0; }
+  header { background: #1a1a2e; color: #fff; padding: 28px 40px; }
+  h1 { margin: 0; font-size: 28px; }
+  main { padding: 24px 40px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px;
+          padding: 16px 20px; margin-bottom: 16px; width: 420px; }
+  .card h2 { margin-top: 0; color: #2255aa; font-size: 18px; }
+  .row { display: flex; gap: 12px; }
+  .chip { background: #e8f0fe; color: #1a3c8e; padding: 4px 10px;
+          border-radius: 10px; font-size: 13px; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #ccc; padding: 4px 10px; font-size: 14px; }
+  #out { color: #0a7a2f; font-weight: bold; }
+</style></head>
+<body>
+<header><h1>sol browser kernel</h1></header>
+<main>
+  <div class="card"><h2>Layout</h2>
+    <div class="row"><span class="chip">flex</span><span class="chip">block</span><span class="chip">float</span></div>
+  </div>
+  <div class="card"><h2>Table</h2>
+    <table><tr><th>crate</th><th>role</th></tr>
+      <tr><td>sol_html</td><td>parse</td></tr>
+      <tr><td>sol_layout</td><td>boxes</td></tr>
+      <tr><td>sol_paint</td><td>pixels</td></tr></table>
+  </div>
+  <div class="card"><h2>JS</h2><p id="out">not run</p></div>
+</main>
+<script>
+  var el = document.getElementById("out");
+  el.textContent = "script ran: " + (2 + 3 * 4);
+</script>
+</body></html>

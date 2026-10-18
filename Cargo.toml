@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/util", "crates/url", "crates/net", "crates/tls", "crates/img",
+    "crates/dom", "crates/html", "crates/css", "crates/text", "crates/layout",
+    "crates/paint", "crates/js", "crates/kernel", "crates/sol",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "unwind"
