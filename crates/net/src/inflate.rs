@@ -44,7 +44,7 @@ pub fn zlib_decode_limited(data: &[u8], limit: usize) -> Result<Vec<u8>, String>
     if cmf & 0x0f != 8 || cmf >> 4 > 7 {
         return Err("zlib: not deflate".into());
     }
-    if ((cmf as u16) << 8 | data[1] as u16) % 31 != 0 {
+    if !((cmf as u16) << 8 | data[1] as u16).is_multiple_of(31) {
         return Err("zlib: bad header check".into());
     }
     if data[1] & 0x20 != 0 {

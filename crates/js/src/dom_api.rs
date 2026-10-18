@@ -300,7 +300,7 @@ fn e_clonenode(i: &mut I, this: V, args: &[V]) -> Res<V> {
             Other,
         }
         let tmp = match &d.node(n).data {
-            NodeData::Element(e) => Tmp::El(e.tag.clone(), e.attrs.clone(), e.namespace.clone()),
+            NodeData::Element(e) => Tmp::El(e.tag.clone(), e.attrs.clone(), e.namespace),
             NodeData::Text(t) => Tmp::Text(t.clone()),
             NodeData::Comment(t) => Tmp::Comment(t.clone()),
             _ => Tmp::Other,
@@ -380,12 +380,10 @@ fn query_sel(doc: &sol_dom::Document, root: NodeId, sel_str: &str, all: bool) ->
     let mut out = Vec::new();
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
-        if doc.node(n).is_element() && n != root {
-            if matches_sel(doc, n, sel_str) {
-                out.push(n);
-                if !all {
-                    return out;
-                }
+        if doc.node(n).is_element() && n != root && matches_sel(doc, n, sel_str) {
+            out.push(n);
+            if !all {
+                return out;
             }
         }
         for k in doc.children(n).iter().rev() {
@@ -567,9 +565,9 @@ fn e_insertadjhtml(i: &mut I, this: V, args: &[V]) -> Res<V> {
     };
     let mut d = d.borrow_mut();
     let tag = d.tag(n).to_string();
-    let kids = sol_html::parse_fragment(&html, &tag, &mut *d);
+    let kids = sol_html::parse_fragment(&html, &tag, &mut d);
     match pos.as_str() {
-        "beforeend" | _ if pos.is_empty() => {
+        "beforeend" | "" => {
             for k in kids {
                 d.append(n, k);
             }
@@ -1207,7 +1205,7 @@ pub fn get_prop(i: &mut I, r: usize, name: &str) -> Res<Option<V>> {
                 "length" => Some(V::Num(i.rt.storage.borrow().len() as f64)),
                 _ => {
                     let v = i.rt.storage.borrow().get(name).cloned();
-                    v.map(|x| V::s(x))
+                    v.map(V::s)
                 }
             });
         }
@@ -1436,9 +1434,8 @@ fn element_prop(i: &mut I, n: NodeId, name: &str) -> Res<Option<V>> {
         "href" | "src" => {
             let raw = node.attr(n, name).unwrap_or("").to_string();
             // resolve relative to base
-            if raw.is_empty() {
-                Some(V::s(raw))
-            } else if raw.starts_with("http")
+            if raw.is_empty()
+                || raw.starts_with("http")
                 || raw.starts_with("data:")
                 || raw.starts_with('/')
                 || raw.starts_with('#')
@@ -1617,7 +1614,7 @@ pub fn set_prop(i: &mut I, r: usize, name: &str, v: V) -> Res<bool> {
                 d.detach(c);
             }
             let tag = d.tag(n).to_string();
-            let kids = sol_html::parse_fragment(&html, &tag, &mut *d);
+            let kids = sol_html::parse_fragment(&html, &tag, &mut d);
             for k in kids {
                 d.append(n, k);
             }
@@ -1626,7 +1623,7 @@ pub fn set_prop(i: &mut I, r: usize, name: &str, v: V) -> Res<bool> {
             let html = v.to_str(i.rt);
             if let Some(p) = d.parent(n) {
                 let tag = d.tag(p).to_string();
-                let kids = sol_html::parse_fragment(&html, &tag, &mut *d);
+                let kids = sol_html::parse_fragment(&html, &tag, &mut d);
                 for k in &kids {
                     d.insert_before(p, *k, n);
                 }

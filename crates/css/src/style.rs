@@ -654,8 +654,7 @@ pub fn expand_decl(name: &str, vals: Vec<Value>) -> Vec<(String, Vec<Value>)> {
             && !s.ends_with("-radius") =>
         {
             // border-left: 1px solid red
-            if s.starts_with("border-") {
-                let side = &s["border-".len()..];
+            if let Some(side) = s.strip_prefix("border-") {
                 if matches!(side, "top" | "right" | "bottom" | "left") {
                     for (k, v) in expand_decl("border", vals) {
                         let k2 = k.replacen("border-", &format!("border-{side}-"), 1);
@@ -1026,7 +1025,7 @@ fn match_compound(doc: &Document, el: NodeId, c: &Compound, state: &dyn PseudoSt
                 NodeData::Text(t) => t.trim().is_empty(),
                 _ => true,
             }),
-            Pseudo::Root => doc.parent(el).map_or(true, |p| !doc.node(p).is_element()),
+            Pseudo::Root => doc.parent(el).is_none_or(|p| !doc.node(p).is_element()),
             Pseudo::Not(s) => !matches(doc, el, s, state),
             Pseudo::Is(s) => matches(doc, el, s, state),
             Pseudo::Has(s) => doc

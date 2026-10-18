@@ -28,6 +28,12 @@ pub struct Floats {
     rights: Vec<(f32, f32, f32)>, // (x_left, y_top, y_bottom)
 }
 
+impl Default for Floats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Floats {
     pub fn new() -> Floats {
         Floats {
@@ -173,8 +179,7 @@ pub fn layout_document(ctx: &mut Ctx, root: &mut LBox, vw: f32, vh: f32) {
         y = lay_block(
             &mut lc,
             &mut k,
-            0.0,
-            y,
+            (0.0, y),
             vw,
             &mut floats,
             &mut prev_margin,
@@ -220,13 +225,13 @@ fn is_positioned(b: &LBox) -> bool {
 pub fn lay_block(
     lc: &mut LC,
     b: &mut LBox,
-    cx: f32,
-    mut y: f32,
+    origin: (f32, f32),
     avail_w: f32,
     floats: &mut Floats,
     prev_margin: &mut Option<f32>,
     cb: Rect,
 ) -> f32 {
+    let (cx, mut y) = origin;
     let st = b.style.clone();
     b.margin = Edges {
         top: len(st.as_ref(), "margin-top", avail_w).unwrap_or(0.0),
@@ -566,7 +571,15 @@ pub fn lay_children(
                     h: 0.0,
                 };
                 let items = std::mem::take(&mut inline_run);
-                cur_y = layout_ifc(lc, &mut ifc, items, x, cur_y, w, floats, parent_st.as_ref());
+                cur_y = layout_ifc(
+                    lc,
+                    &mut ifc,
+                    items,
+                    (x, cur_y),
+                    w,
+                    floats,
+                    parent_st.as_ref(),
+                );
                 prev_margin = Some(0.0);
                 new_kids.push(ifc);
             }
@@ -588,12 +601,12 @@ pub fn lay_children(
                     h: 0.0,
                 };
                 let items = std::mem::take(&mut k.kids);
-                cur_y = layout_ifc(lc, &mut k, items, x, cur_y, w, floats, parent_st.as_ref());
+                cur_y = layout_ifc(lc, &mut k, items, (x, cur_y), w, floats, parent_st.as_ref());
                 prev_margin = Some(0.0);
                 new_kids.push(k);
             }
             _ => {
-                cur_y = lay_block(lc, &mut k, x, cur_y, w, floats, &mut prev_margin, cb);
+                cur_y = lay_block(lc, &mut k, (x, cur_y), w, floats, &mut prev_margin, cb);
                 new_kids.push(k);
             }
         }
@@ -708,15 +721,17 @@ fn split_words(text: &str, pre: bool) -> Vec<(String, bool, bool)> {
 /// whitespace (so the next item gets a leading space).
 fn emit_text(
     items: &mut Vec<Item>,
-    text: &str,
-    face_idx: usize,
-    style: &Option<Rc<Style>>,
-    node: Option<NodeId>,
+    source: &LBox,
     face: &sol_text::Face,
     w: f32,
     pre: bool,
     leading_ws: bool,
 ) {
+    let run = source.text.as_ref().unwrap();
+    let text = &run.text;
+    let face_idx = run.face_idx;
+    let style = &source.style;
+    let node = source.node;
     let lh = line_height_of(style.as_ref(), face, w);
     let va = valign_of(style.as_ref(), face);
     let space_px = face.measure(" ");
@@ -784,12 +799,12 @@ fn layout_ifc(
     lc: &mut LC,
     ifc: &mut LBox,
     items_src: Vec<LBox>,
-    x: f32,
-    y: f32,
+    origin: (f32, f32),
     w: f32,
     floats: &mut Floats,
     parent_st: Option<&Rc<Style>>,
 ) -> f32 {
+    let (x, y) = origin;
     let mut items: Vec<Item> = Vec::new();
     let mut boxes: Vec<LBox> = Vec::new();
     let pre = parent_st
@@ -815,17 +830,7 @@ fn layout_ifc(
                     .map(|c| c.is_whitespace())
                     .unwrap_or(false);
                 let before = items.len();
-                emit_text(
-                    &mut items,
-                    &tr.text,
-                    tr.face_idx,
-                    &b.style,
-                    b.node,
-                    &face,
-                    w,
-                    pre,
-                    pending_space || starts_ws,
-                );
+                emit_text(&mut items, &b, &face, w, pre, pending_space || starts_ws);
                 // mark first new item's leading space correctly
                 if items.len() > before && (pending_space || starts_ws) {
                     items[before].space_w = items[before].space_w.max(face.measure(" "));
@@ -1188,17 +1193,7 @@ fn emit_flat(
                 .next()
                 .map(|c| c.is_whitespace())
                 .unwrap_or(false);
-            emit_text(
-                items,
-                &tr.text,
-                tr.face_idx,
-                &b.style,
-                b.node,
-                &face,
-                w,
-                false,
-                pending_space || starts_ws,
-            );
+            emit_text(items, &b, &face, w, false, pending_space || starts_ws);
             pending_space = tr
                 .text
                 .chars()

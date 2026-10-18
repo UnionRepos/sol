@@ -110,7 +110,7 @@ pub fn layout_table(lc: &mut LC, b: &mut LBox, x: f32, y: f32, w: f32) {
                 // measure content: lay out cell contents at wide width
                 // to get a natural width estimate — expensive but simple
                 let mut probe = LBox::new(Kind::Block);
-                probe.kids = cell.kids.iter().map(|k| k.clone()).collect();
+                probe.kids = cell.kids.to_vec();
                 let mut f = Floats::new();
                 let cb = Rect {
                     x: 0.0,
@@ -205,8 +205,8 @@ pub fn layout_table(lc: &mut LC, b: &mut LBox, x: f32, y: f32, w: f32) {
         let mut laid: Vec<LBox> = Vec::new();
         for (cell, span) in cells {
             let mut cw = 0.0f32;
-            for c in ci..(ci + span).min(ncols) {
-                cw += col_w[c];
+            for width in col_w.iter().take((ci + span).min(ncols)).skip(ci) {
+                cw += width;
             }
             cw += spacing * span.saturating_sub(1) as f32;
             let mut c2 = cell.clone();

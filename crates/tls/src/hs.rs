@@ -823,8 +823,8 @@ fn build_client_hello(host: &str, priv_key: &[u8; 32], cookie: Option<&[u8]>) ->
     sni.extend_from_slice(&(hn.len() as u16).to_be_bytes());
     sni.extend_from_slice(hn);
     add!(0, sni);
-    add!(43, vec![2, 0x03, 0x04]);
-    add!(10, vec![0, 4, 0x00, 0x1d, 0x00, 0x17]);
+    add!(43, [2, 0x03, 0x04]);
+    add!(10, [0, 4, 0x00, 0x1d, 0x00, 0x17]);
     let sigs: Vec<u8> = vec![
         0x04, 0x03, 0x05, 0x03, 0x08, 0x04, 0x08, 0x05, 0x08, 0x06, 0x04, 0x01, 0x05, 0x01, 0x06,
         0x01,
@@ -842,7 +842,7 @@ fn build_client_hello(host: &str, priv_key: &[u8; 32], cookie: Option<&[u8]>) ->
     ks.extend_from_slice(&(ent.len() as u16).to_be_bytes());
     ks.extend_from_slice(&ent);
     add!(51, ks);
-    add!(45, vec![1, 1]);
+    add!(45, [1, 1]);
     let mut alpn = Vec::new();
     alpn.extend_from_slice(&9u16.to_be_bytes());
     alpn.push(8);
@@ -882,6 +882,38 @@ mod tests {
             let len = buf.len().min(1);
             self.bytes.read(&mut buf[..len])
         }
+    }
+
+    #[test]
+    fn client_hello_preserves_negotiation_extensions() {
+        let message = build_client_hello("example.test", &[7; 32], Some(b"retry"));
+        let mut handshake = Reader::new(&message);
+        assert_eq!(handshake.u8().unwrap(), 1);
+        let mut hello = Reader::new(handshake.vec24().unwrap());
+        assert!(handshake.done());
+        assert_eq!(hello.u16().unwrap(), 0x0303);
+        hello.take(32).unwrap();
+        assert_eq!(hello.vec8().unwrap().len(), 32);
+        assert_eq!(
+            hello.vec16().unwrap(),
+            &[0x13, 0x01, 0x13, 0x03, 0x13, 0x02]
+        );
+        assert_eq!(hello.vec8().unwrap(), &[0]);
+        let mut encoded = Reader::new(hello.vec16().unwrap());
+        assert!(hello.done());
+        let mut extensions = std::collections::HashMap::new();
+        while !encoded.done() {
+            let kind = encoded.u16().unwrap();
+            assert!(extensions.insert(kind, encoded.vec16().unwrap()).is_none());
+        }
+        assert_eq!(extensions[&43], &[2, 0x03, 0x04]);
+        assert_eq!(extensions[&10], &[0, 4, 0x00, 0x1d, 0x00, 0x17]);
+        assert_eq!(extensions[&45], &[1, 1]);
+        assert_eq!(extensions[&44], b"\x00\x05retry");
+        assert!(extensions.contains_key(&0));
+        assert!(extensions.contains_key(&13));
+        assert!(extensions.contains_key(&16));
+        assert!(extensions.contains_key(&51));
     }
 
     #[test]

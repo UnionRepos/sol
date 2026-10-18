@@ -148,12 +148,12 @@ impl<'a> VP<'a> {
                     && self.s[self.i..]
                         .chars()
                         .nth(1)
-                        .map_or(false, |n| n.is_ascii_digit() || n == '.'))
+                        .is_some_and(|n| n.is_ascii_digit() || n == '.'))
                 || (c == '+'
                     && self.s[self.i..]
                         .chars()
                         .nth(1)
-                        .map_or(false, |n| n.is_ascii_digit() || n == '.')) =>
+                        .is_some_and(|n| n.is_ascii_digit() || n == '.')) =>
             {
                 // number [unit|%]
                 let start = self.i;
@@ -248,12 +248,12 @@ impl<'a> VP<'a> {
                     match idl.as_str() {
                         "rgb" | "rgba" => {
                             let parts: Vec<f64> = inner
-                                .split(|c| c == ',' || c == '/' || c == ' ')
+                                .split([',', '/', ' '])
                                 .filter(|s| !s.is_empty())
                                 .map(|s| s.trim_end_matches('%').parse().unwrap_or(0.0))
                                 .collect();
                             let pct: Vec<bool> = inner
-                                .split(|c| c == ',' || c == '/' || c == ' ')
+                                .split([',', '/', ' '])
                                 .filter(|s| !s.is_empty())
                                 .map(|s| s.ends_with('%'))
                                 .collect();
@@ -273,7 +273,7 @@ impl<'a> VP<'a> {
                         }
                         "hsl" | "hsla" => {
                             let parts: Vec<f64> = inner
-                                .split(|c| c == ',' || c == '/' || c == ' ')
+                                .split([',', '/', ' '])
                                 .filter(|s| !s.is_empty())
                                 .map(|s| s.trim_end_matches('%').parse().unwrap_or(0.0))
                                 .collect();

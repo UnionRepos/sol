@@ -53,7 +53,7 @@ impl<'a> I<'a> {
 
     fn tick(&mut self) -> Res<()> {
         self.steps += 1;
-        if self.steps % 100_000 == 0 {
+        if self.steps.is_multiple_of(100_000) {
             if self.rt.allocs > self.rt.gc_threshold {
                 self.rt.gc(&self.env_stack.clone());
             }
@@ -1051,7 +1051,7 @@ impl<'a> I<'a> {
             "in" => {
                 let key = a.to_str(self.rt);
                 if let V::Obj(r) = b {
-                    V::Bool(self.rt.get_raw(r, &key).is_some() || has_own(&self.rt, r, &key))
+                    V::Bool(self.rt.get_raw(r, &key).is_some() || has_own(self.rt, r, &key))
                 } else {
                     V::Bool(false)
                 }

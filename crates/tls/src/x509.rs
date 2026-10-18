@@ -351,7 +351,7 @@ pub fn verify_signature(
         }
         ("ecdsa", Spki::Ec { curve, x, y }) => {
             // sig = SEQ { r, s }
-            let (seq, _) = der::read_tlv(sig).map_err(|e| e)?;
+            let (seq, _) = der::read_tlv(sig)?;
             if seq.tag != 0x30 {
                 return Ok(false);
             }

@@ -221,6 +221,10 @@ by its text runs. Painting resolves those face indices rather than independently
 selecting fonts again. Text measurement and painting use the same shaping path,
 including grapheme-aware fallback and horizontal bidirectional runs.
 
+The low-level `block::lay_block` entry point accepts its origin as one `(x, y)`
+tuple. Inline flow uses the same coordinate grouping, while text emission takes
+the source box so its node, style, and selected face stay together.
+
 Transforms are shared through paint helpers. DOM bounding rectangles accumulate
 ancestor transforms; hit testing maps the pointer through inverse transforms.
 Anonymous and text boxes do not reapply styles inherited from their owning box.

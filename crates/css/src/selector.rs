@@ -114,11 +114,9 @@ pub fn parse_selector(s: &str) -> Option<Selector> {
     let mut i = 0;
     let b: Vec<char> = s.chars().collect();
     let mut pending_comb: Option<Combinator> = None;
-    let mut saw_space = false;
     while i < b.len() {
         match b[i] {
             c if c.is_whitespace() => {
-                saw_space = true;
                 i += 1;
             }
             '>' | '+' | '~' => {
@@ -127,23 +125,15 @@ pub fn parse_selector(s: &str) -> Option<Selector> {
                     '+' => Combinator::NextSibling,
                     _ => Combinator::LaterSibling,
                 });
-                saw_space = false;
                 i += 1;
             }
             _ => {
                 let (comp, ni) = parse_compound(&b, i);
                 i = ni;
                 if !parts.is_empty() {
-                    combs.push(pending_comb.take().unwrap_or_else(|| {
-                        if saw_space {
-                            Combinator::Descendant
-                        } else {
-                            Combinator::Descendant
-                        }
-                    }));
+                    combs.push(pending_comb.take().unwrap_or(Combinator::Descendant));
                 }
                 pending_comb = None;
-                saw_space = false;
                 parts.push(comp);
             }
         }
@@ -259,10 +249,8 @@ fn parse_compound(b: &[char], mut i: usize) -> (Compound, usize) {
                             }
                             ch => name.push(ch.to_ascii_lowercase()),
                         }
-                    } else if !matches!(b[i], '"' | '\'') {
-                        if !b[i].is_whitespace() {
-                            value.push(b[i]);
-                        }
+                    } else if !matches!(b[i], '"' | '\'') && !b[i].is_whitespace() {
+                        value.push(b[i]);
                     }
                     i += 1;
                 }

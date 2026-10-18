@@ -9,6 +9,10 @@ pub type ObjRef = usize;
 /// "no prototype" sentinel
 pub const NO_PROTO: ObjRef = usize::MAX;
 pub type EnvRef = Rc<RefCell<Env>>;
+pub type LayoutQuery = Rc<dyn Fn(sol_dom::NodeId) -> (f32, f32, f32, f32)>;
+pub type Navigate = Rc<dyn Fn(&str)>;
+pub type FetchResponse = (u16, String, Vec<(String, String)>);
+pub type Fetcher = Rc<dyn Fn(&str, &str, Option<&str>) -> Result<FetchResponse, String>>;
 
 #[derive(Clone, Debug)]
 pub enum V {
@@ -365,25 +369,23 @@ pub struct Rt {
     /// viewport size for window.innerWidth/Height
     pub viewport: (u32, u32),
     /// layout query hook: node -> (x,y,w,h); set by kernel
-    pub layout_query: Option<Rc<dyn Fn(sol_dom::NodeId) -> (f32, f32, f32, f32)>>,
+    pub layout_query: Option<LayoutQuery>,
     /// navigation hook (location.href = ...)
-    pub navigate: Option<Rc<dyn Fn(&str)>>,
+    pub navigate: Option<Navigate>,
     /// fetch hook for XHR/fetch (set by kernel): (url, method, body) -> (status, body, headers)
-    pub fetcher: Option<
-        Rc<
-            dyn Fn(
-                &str,
-                &str,
-                Option<&str>,
-            ) -> Result<(u16, String, Vec<(String, String)>), String>,
-        >,
-    >,
+    pub fetcher: Option<Fetcher>,
     pub allocs: usize,
     pub gc_threshold: usize,
     /// currently-executing roots beyond env: pinned ObjRefs
     pub pinned: Vec<ObjRef>,
     /// event loop turn: script stack depth
     pub depth: usize,
+}
+
+impl Default for Rt {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Rt {

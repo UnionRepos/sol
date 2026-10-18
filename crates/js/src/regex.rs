@@ -469,10 +469,7 @@ impl<'a> M<'a> {
             N::Seq(items) => {
                 let mut p = pos;
                 for it in items {
-                    match self.mat(it, p) {
-                        Some(e) => p = e,
-                        None => return None,
-                    }
+                    p = self.mat(it, p)?;
                 }
                 Some(p)
             }
@@ -556,8 +553,8 @@ impl<'a> M<'a> {
         // need at least min matches
         if count < max {
             if let Some(e) = self.mat(n, pos) {
-                if e == pos && count + 1 <= min {
-                    return self.rep(n, min, max, greedy, e + 1.min(1), count + 1);
+                if e == pos && count < min {
+                    return self.rep(n, min, max, greedy, e + 1, count + 1);
                 }
                 return self.rep(n, min, max, greedy, e, count + 1);
             }

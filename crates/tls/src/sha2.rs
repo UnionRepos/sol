@@ -253,7 +253,7 @@ fn pad_blocks(data: &[u8], block: usize, len_bytes: usize) -> Vec<Vec<u8>> {
     let bit_len = (data.len() as u128) * 8;
     let mut v = data.to_vec();
     v.push(0x80);
-    while (v.len() + len_bytes) % block != 0 {
+    while !(v.len() + len_bytes).is_multiple_of(block) {
         v.push(0);
     }
     v.extend_from_slice(&bit_len.to_be_bytes()[16 - len_bytes..]);

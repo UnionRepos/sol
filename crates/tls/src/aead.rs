@@ -89,8 +89,8 @@ impl Aes {
                 t[c * 4 + rr] = SBOX[s[((c + rr) % 4) * 4 + rr] as usize];
             }
         }
-        for i in 0..16 {
-            t[i] ^= (self.rk[self.rounds * 4 + i / 4] >> ((3 - i % 4) * 8)) as u8;
+        for (i, byte) in t.iter_mut().enumerate() {
+            *byte ^= (self.rk[self.rounds * 4 + i / 4] >> ((3 - i % 4) * 8)) as u8;
         }
         t
     }

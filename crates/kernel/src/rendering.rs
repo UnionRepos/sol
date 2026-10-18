@@ -76,9 +76,8 @@ impl Page {
         let mut c = Canvas::new(vw, vh);
         c.clear(sol_paint::Rgba(255, 255, 255, 255));
         let fallback = self.fonts.face("sans-serif", 16.0, false, false);
-        match &self.layout {
-            Some(o) => sol_paint::render(&self.dl, &o.faces, &self.images, &fallback, &mut c),
-            None => {}
+        if let Some(o) = &self.layout {
+            sol_paint::render(&self.dl, &o.faces, &self.images, &fallback, &mut c)
         }
         c
     }

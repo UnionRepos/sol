@@ -64,7 +64,7 @@ impl Page {
             let (src, inline) = {
                 let d = self.doc.borrow();
                 let e = d.node(*s).element();
-                let src = e.map(|e| e.attr("src").map(|x| x.to_string())).flatten();
+                let src = e.and_then(|e| e.attr("src").map(|x| x.to_string()));
                 let ty = e.map(|e| e.attr("type").unwrap_or("").to_string());
                 if matches!(ty.as_deref(), Some(t) if !t.is_empty() && t != "text/javascript" && t != "module")
                 {

@@ -62,7 +62,9 @@ fn draws_text_glyphs() {
     );
     // count dark pixels — real glyphs produce coverage
     let dark =
-        c.px.chunks_exact(4)
+        c.px.as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[0] < 100 && p[1] < 100 && p[2] < 100)
             .count();
     assert!(dark > 50, "expected glyph pixels, got {dark}");
@@ -79,7 +81,7 @@ fn image_blit() {
         .unwrap();
     // 8x8 red image
     let mut px8 = vec![0u8; 8 * 8 * 4];
-    for p in px8.chunks_exact_mut(4) {
+    for p in px8.as_chunks_mut::<4>().0 {
         p[0] = 255;
         p[3] = 255;
     }

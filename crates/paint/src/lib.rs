@@ -138,20 +138,16 @@ fn canvas_bg(root: &LBox) -> Option<Rgba> {
     }
     let mut cur = root;
     for _ in 0..2 {
-        match cur.kids.iter().find(|k| k.node.is_some()) {
-            Some(k) => {
-                if let Some(c) = k
-                    .style
-                    .as_ref()
-                    .and_then(|s| color_of(s, "background-color"))
-                    .filter(|c| c.3 > 0)
-                {
-                    return Some(c);
-                }
-                cur = k;
-            }
-            None => return None,
+        let k = cur.kids.iter().find(|k| k.node.is_some())?;
+        if let Some(c) = k
+            .style
+            .as_ref()
+            .and_then(|s| color_of(s, "background-color"))
+            .filter(|c| c.3 > 0)
+        {
+            return Some(c);
         }
+        cur = k;
     }
     None
 }
@@ -527,7 +523,7 @@ impl Canvas {
     }
 
     pub fn clear(&mut self, c: Rgba) {
-        for p in self.px.chunks_exact_mut(4) {
+        for p in self.px.as_chunks_mut::<4>().0 {
             p[0] = c.0;
             p[1] = c.1;
             p[2] = c.2;

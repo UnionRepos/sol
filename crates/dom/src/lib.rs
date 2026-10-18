@@ -156,6 +156,12 @@ pub struct Document {
     pub base_href: Option<String>,
 }
 
+impl Default for Document {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Document {
     pub fn new() -> Document {
         let mut arena = Arena::new();

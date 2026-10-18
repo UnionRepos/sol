@@ -556,7 +556,7 @@ impl<'a> TreeBuilder<'a> {
                 self.afe.remove(fe_pos);
                 return true;
             }
-            if !self.has_in_default_scope(&self.doc.tag(fe).to_string()) {
+            if !self.has_in_default_scope(self.doc.tag(fe)) {
                 return true;
             }
             if self.cur() != Some(fe) {
@@ -2215,7 +2215,7 @@ impl<'a> TreeBuilder<'a> {
 }
 
 thread_local! {
-    static FRAG_OUT: std::cell::RefCell<Vec<NodeId>> = std::cell::RefCell::new(Vec::new());
+    static FRAG_OUT: std::cell::RefCell<Vec<NodeId>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Take the nodes produced by the last `parse_fragment` call.

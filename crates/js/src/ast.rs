@@ -500,7 +500,7 @@ impl P {
             if self.at_p("[") || self.at_p("{") {
                 // destructuring — skip pattern, bind nothing useful
                 // (simple implementation: treat as anonymous)
-                let _ = self.pattern()?;
+                self.pattern()?;
                 let init = if self.eat_p("=") {
                     Some(self.expr()?)
                 } else {
@@ -820,10 +820,8 @@ impl P {
                     T::Ident(s2) => params.push(s2),
                     _ => return false,
                 }
-                if self.eat_p("=") {
-                    if self.assign().is_err() {
-                        return false;
-                    }
+                if self.eat_p("=") && self.assign().is_err() {
+                    return false;
                 }
                 if self.eat_p(",") {
                     continue;

@@ -89,7 +89,7 @@ pub fn layout_flex(lc: &mut LC, b: &mut LBox, x: f32, y: f32, w: f32) -> f32 {
             let mut floats = Floats::new();
             let mut pm = None;
             let cb = Rect { x, y, w, h: 0.0 };
-            lay_block(lc, &mut probe, x, y, w, &mut floats, &mut pm, cb);
+            lay_block(lc, &mut probe, (x, y), w, &mut floats, &mut pm, cb);
             it.basis = if column { probe.rect.h } else { probe.rect.w };
         }
     }
@@ -186,7 +186,15 @@ pub fn layout_flex(lc: &mut LC, b: &mut LBox, x: f32, y: f32, w: f32) -> f32 {
                 };
                 // for column direction, "main" is height; x positions are
                 // cross-axis — line (column) index selects x offset
-                lay_block(lc, &mut kb, x, cy + (pen - x), w, &mut floats, &mut pm, cb);
+                lay_block(
+                    lc,
+                    &mut kb,
+                    (x, cy + (pen - x)),
+                    w,
+                    &mut floats,
+                    &mut pm,
+                    cb,
+                );
             } else {
                 let cb = Rect {
                     x,
@@ -194,7 +202,7 @@ pub fn layout_flex(lc: &mut LC, b: &mut LBox, x: f32, y: f32, w: f32) -> f32 {
                     w: it.main,
                     h: 0.0,
                 };
-                lay_block(lc, &mut kb, pen, cy, it.main, &mut floats, &mut pm, cb);
+                lay_block(lc, &mut kb, (pen, cy), it.main, &mut floats, &mut pm, cb);
                 let (kx, ky) = (kb.rect.x, kb.rect.y);
                 shift_pub(&mut kb, pen - kx, cy - ky);
             }

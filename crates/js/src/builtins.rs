@@ -294,7 +294,7 @@ fn a_sort(i: &mut I, this: V, args: &[V]) -> Res<V> {
             }
         }
     } else {
-        items.sort_by(|x, y| x.to_str(i.rt).cmp(&y.to_str(i.rt)));
+        items.sort_by_key(|x| x.to_str(i.rt));
     }
     if let ObjKind::Arr(a) = &i.rt.obj(r).kind {
         *a.borrow_mut() = items;
@@ -716,27 +716,22 @@ fn s_replace(i: &mut I, this: V, args: &[V]) -> Res<V> {
             let mut out = String::new();
             let mut last = 0usize;
             let mut pos = 0usize;
-            loop {
-                match re.find(&s, pos) {
-                    Some((a, b, caps)) => {
-                        out.push_str(&chars[last..a].iter().collect::<String>());
-                        let matched: String = chars[a..b].iter().collect();
-                        out.push_str(&expand_replacement(
-                            &rep.to_str(i.rt),
-                            &matched,
-                            &caps,
-                            &chars,
-                        ));
-                        last = b;
-                        pos = if b == a { b + 1 } else { b };
-                        if !global {
-                            break;
-                        }
-                        if pos > chars.len() {
-                            break;
-                        }
-                    }
-                    None => break,
+            while let Some((a, b, caps)) = re.find(&s, pos) {
+                out.push_str(&chars[last..a].iter().collect::<String>());
+                let matched: String = chars[a..b].iter().collect();
+                out.push_str(&expand_replacement(
+                    &rep.to_str(i.rt),
+                    &matched,
+                    &caps,
+                    &chars,
+                ));
+                last = b;
+                pos = if b == a { b + 1 } else { b };
+                if !global {
+                    break;
+                }
+                if pos > chars.len() {
+                    break;
                 }
             }
             out.push_str(&chars[last..].iter().collect::<String>());
@@ -1212,7 +1207,7 @@ fn n_toprecision(i: &mut I, this: V, args: &[V]) -> Res<V> {
 fn n_tostring(i: &mut I, this: V, args: &[V]) -> Res<V> {
     let n = this.to_num(i.rt);
     let radix = arg(args, 0).to_num(i.rt) as u32;
-    if radix >= 2 && radix <= 36 && n.fract() == 0.0 {
+    if (2..=36).contains(&radix) && n.fract() == 0.0 {
         let mut v = n as i64;
         let neg = v < 0;
         v = v.abs();

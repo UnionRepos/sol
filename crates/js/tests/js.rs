@@ -339,6 +339,39 @@ fn dom_basics() {
 }
 
 #[test]
+fn insert_adjacent_html_preserves_position_and_fragment_order() {
+    for (position, parent_text, target_text) in [
+        ("beforebegin", "firstsecondold", "old"),
+        ("afterbegin", "firstsecondold", "firstsecondold"),
+        ("beforeend", "oldfirstsecond", "oldfirstsecond"),
+        ("afterend", "oldfirstsecond", "old"),
+        ("", "oldfirstsecond", "oldfirstsecond"),
+        ("invalid", "old", "old"),
+    ] {
+        let mut doc = Document::new();
+        sol_html::parse(
+            "<body><section id='parent'><div id='target'><b>old</b></div></section>",
+            &mut doc,
+        );
+        let doc = Rc::new(RefCell::new(doc));
+        let mut js = Js::new();
+        js.set_document(doc.clone());
+        ev(
+            &mut js,
+            &format!(
+                "document.getElementById('target').insertAdjacentHTML(\
+                 '{position}', '<i>first</i><em>second</em>');"
+            ),
+        );
+        let doc = doc.borrow();
+        let parent = doc.get_element_by_id("parent").unwrap();
+        let target = doc.get_element_by_id("target").unwrap();
+        assert_eq!(doc.text_content(parent), parent_text, "{position:?}");
+        assert_eq!(doc.text_content(target), target_text, "{position:?}");
+    }
+}
+
+#[test]
 fn dom_events() {
     let mut js = Js::new();
     let doc = Rc::new(RefCell::new(Document::new()));
