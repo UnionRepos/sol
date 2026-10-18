@@ -369,25 +369,41 @@ fn e_haschildren(i: &mut I, this: V, _a: &[V]) -> Res<V> {
 }
 
 fn matches_sel(doc: &sol_dom::Document, el: NodeId, sel_str: &str) -> bool {
-    if let Some(sel) = sol_css::parse_selector(sel_str) {
-        sol_css::style::matches(doc, el, &sel, &sol_css::NoState)
-    } else {
-        false
-    }
+    sol_css::parse_selector_list(sel_str)
+        .iter()
+        .any(|selector| {
+            sol_css::style::matches_scoped(doc, el, selector, &sol_css::NoState, Some(el))
+        })
 }
 
 fn query_sel(doc: &sol_dom::Document, root: NodeId, sel_str: &str, all: bool) -> Vec<NodeId> {
+    // All candidates share the same scope; rebinding it to each candidate would
+    // make :scope > child queries depend on which element is currently tested.
+    let scope = if doc.node(root).is_element() {
+        Some(root)
+    } else {
+        doc.document_element()
+    };
+    let selectors = sol_css::parse_selector_list(sel_str);
     let mut out = Vec::new();
+    if selectors.is_empty() {
+        return out;
+    }
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
-        if doc.node(n).is_element() && n != root && matches_sel(doc, n, sel_str) {
+        if doc.node(n).is_element()
+            && n != root
+            && selectors.iter().any(|selector| {
+                sol_css::style::matches_scoped(doc, n, selector, &sol_css::NoState, scope)
+            })
+        {
             out.push(n);
             if !all {
                 return out;
             }
         }
-        for k in doc.children(n).iter().rev() {
-            stack.push(*k);
+        for child in doc.children(n).iter().rev() {
+            stack.push(*child);
         }
     }
     out

@@ -113,3 +113,42 @@ fn reloading_html_reuses_document_handle_without_leaking_author_styles() {
     assert!(page.outer_html().contains("data-current=\"yes\""));
     assert_eq!(pixel(&page, 10, 10), [0, 0, 255, 255]);
 }
+
+#[test]
+fn modern_css_values_and_relational_selectors_reach_geometry_and_pixels() {
+    let mut page = page_with(
+        r#"<style>
+        :root { --width: 20px; --rgb: 255 0 0; }
+        body { margin:0 }
+        @future preserved { x:y }
+        @supports (display:flex) {
+            @media (100px <= width < 200px) {
+                #box:has(> .child) { position:absolute; left:3px; top:4px;
+                    width:calc(var(--width) * 2 + 5px); height:20px;
+                    background:rgb(var(--rgb)); }
+            }
+        }
+        :where(#box) { width:1px }
+        </style><div id=box><span class=child></span></div>"#,
+    );
+    let width = page
+        .js
+        .eval("document.getElementById('box').getBoundingClientRect().width")
+        .unwrap();
+    assert_eq!(width.to_num(&page.js.rt), 45.0);
+    assert_eq!(pixel(&page, 10, 10), [255, 0, 0, 255]);
+    assert_eq!(pixel(&page, 50, 10), [255, 255, 255, 255]);
+}
+
+#[test]
+fn javascript_selector_lists_and_scope_use_the_shared_css_parser() {
+    let mut page =
+        page_with("<main id=root><div id=a class=x><b class=x></b></div><div id=b></div></main>");
+    let value=page.js.eval("var root=document.getElementById('root'); root.querySelectorAll(':scope > .x, :scope > #b').length").unwrap();
+    assert_eq!(value.to_num(&page.js.rt), 2.0);
+    let value = page
+        .js
+        .eval("document.getElementById('a').matches(':scope:is(.x, .missing), #other')")
+        .unwrap();
+    assert_eq!(value.to_str(&page.js.rt), "true");
+}

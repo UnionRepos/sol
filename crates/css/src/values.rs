@@ -10,6 +10,11 @@ pub enum Value {
     Color(u8, u8, u8, u8),
     Url(String),
     Func(String, Vec<Value>),
+    Components(Vec<crate::syntax::ComponentValue>),
+    Math(String, Vec<crate::syntax::ComponentValue>),
+    Dimension(f64, String),
+    Block(char, Vec<Value>),
+    Token(crate::syntax::TokenKind),
     Keyword(String), // e.g. "none", "auto", handled like Ident but kept for clarity
 }
 
@@ -46,271 +51,209 @@ pub enum Unit {
 }
 
 pub fn parse_value(s: &str) -> Vec<Value> {
-    let mut vals = Vec::new();
-    let mut p = VP { s, i: 0 };
-    loop {
-        p.ws();
-        if p.done() {
-            break;
-        }
-        if let Some(v) = p.one() {
-            vals.push(v);
-        } else {
-            break;
-        }
-        // '/' separates e.g. font shorthand's size/line-height
-        if p.peek() == Some('/') {
-            p.i += 1;
-            vals.push(Value::Ident("/".into()));
-        } else if p.peek() == Some(',') {
-            p.i += 1;
-            vals.push(Value::Ident(",".into()));
-        }
-    }
-    vals
+    from_components(&crate::syntax::parse_component_values(s).values)
 }
 
-/// First value convenience.
 pub fn value1(s: &str) -> Option<Value> {
     parse_value(s).into_iter().next()
 }
 
-struct VP<'a> {
-    s: &'a str,
-    i: usize,
+pub(crate) fn from_components(values: &[crate::syntax::ComponentValue]) -> Vec<Value> {
+    use crate::syntax::{ComponentValue as C, TokenKind as T};
+    values
+        .iter()
+        .filter_map(|value| match value {
+            C::Token(token) => Some(match &token.kind {
+                T::Whitespace => return None,
+                T::Ident(name) => {
+                    if let Some((r, g, b, a)) = named_color(&name.to_ascii_lowercase()) {
+                        Value::Color(r, g, b, a)
+                    } else {
+                        Value::Ident(if name.starts_with("--") {
+                            name.clone()
+                        } else {
+                            name.to_ascii_lowercase()
+                        })
+                    }
+                }
+                T::String(s) => Value::Str(s.clone()),
+                T::Url(url) => Value::Url(url.clone()),
+                T::Hash { value, .. } => match parse_hex(value) {
+                    Some((r, g, b, a)) => Value::Color(r, g, b, a),
+                    None => Value::Token(token.kind.clone()),
+                },
+                T::Number(number) => Value::Number(number.value),
+                T::Percentage(number) => Value::Percentage(number.value),
+                T::Dimension(number, unit) => match parse_unit(unit) {
+                    Some(unit) => Value::Length(number.value, unit),
+                    None => Value::Dimension(number.value, unit.clone()),
+                },
+                T::Comma => Value::Ident(",".into()),
+                T::Delim(c) if matches!(c, '/' | '+' | '-' | '*') => Value::Ident(c.to_string()),
+                other => Value::Token(other.clone()),
+            }),
+            C::Function { name, value } => {
+                let name = name.to_ascii_lowercase();
+                if matches!(name.as_str(), "calc" | "min" | "max" | "clamp") {
+                    return Some(Value::Math(name, value.clone()));
+                }
+                let args = from_components(value);
+                if name == "url" {
+                    if let [Value::Str(url)] = args.as_slice() {
+                        return Some(Value::Url(url.clone()));
+                    }
+                }
+                Some(parse_color_function(&name, &args).unwrap_or(Value::Func(name, args)))
+            }
+            C::Block { opening, value } => Some(Value::Block(*opening, from_components(value))),
+        })
+        .collect()
 }
-impl<'a> VP<'a> {
-    fn done(&self) -> bool {
-        self.i >= self.s.len()
+
+fn parse_unit(unit: &str) -> Option<Unit> {
+    Some(match unit.to_ascii_lowercase().as_str() {
+        "px" => Unit::Px,
+        "em" => Unit::Em,
+        "rem" => Unit::Rem,
+        "ex" => Unit::Ex,
+        "ch" => Unit::Ch,
+        "vw" => Unit::Vw,
+        "vh" => Unit::Vh,
+        "vmin" => Unit::Vmin,
+        "vmax" => Unit::Vmax,
+        "cm" => Unit::Cm,
+        "mm" => Unit::Mm,
+        "in" => Unit::In,
+        "pt" => Unit::Pt,
+        "pc" => Unit::Pc,
+        "q" => Unit::Q,
+        "s" => Unit::S,
+        "ms" => Unit::Ms,
+        "deg" => Unit::Deg,
+        "rad" => Unit::Rad,
+        "grad" => Unit::Grad,
+        "turn" => Unit::Turn,
+        "hz" => Unit::Hz,
+        "khz" => Unit::Khz,
+        "dpi" => Unit::Dpi,
+        "dpcm" => Unit::Dpcm,
+        "dppx" | "x" => Unit::Dppx,
+        "fr" => Unit::Fr,
+        _ => return None,
+    })
+}
+
+fn parse_color_function(name: &str, args: &[Value]) -> Option<Value> {
+    if !matches!(name, "rgb" | "rgba" | "hsl" | "hsla" | "hwb") {
+        return None;
     }
-    fn peek(&self) -> Option<char> {
-        self.s[self.i..].chars().next()
-    }
-    fn ws(&mut self) {
-        while let Some(c) = self.peek() {
-            if !c.is_whitespace() {
-                break;
-            }
-            self.i += c.len_utf8();
-        }
-    }
-    fn ident(&mut self) -> String {
-        let start = self.i;
-        if self.peek() == Some('-') {
-            self.i += 1;
-        }
-        while let Some(c) = self.peek() {
-            if c.is_alphanumeric() || matches!(c, '-' | '_') || c >= '\u{80}' {
-                self.i += c.len_utf8();
-            } else {
-                break;
-            }
-        }
-        self.s[start..self.i].to_string()
-    }
-    fn one(&mut self) -> Option<Value> {
-        let c = self.peek()?;
-        match c {
-            '#' => {
-                self.i += 1;
-                let start = self.i;
-                while matches!(self.peek(), Some(x) if x.is_ascii_hexdigit()) {
-                    self.i += 1;
+    let comma = args.iter().any(|v| matches!(v, Value::Ident(s) if s==","));
+    let mut channels = Vec::new();
+    let mut slash = None;
+    for v in args {
+        match v {
+            Value::Ident(s) if s == "," => {
+                if !comma {
+                    return None;
                 }
-                Some(parse_hex(&self.s[start..self.i]).map_or(
-                    Value::Ident(format!("#{}", &self.s[start..self.i])),
-                    |(r, g, b, a)| Value::Color(r, g, b, a),
-                ))
             }
-            '"' | '\'' => {
-                self.i += 1;
-                let mut s = String::new();
-                while let Some(x) = self.s[self.i..].chars().next() {
-                    if x == c {
-                        self.i += 1;
-                        break;
-                    }
-                    if x == '\\' {
-                        self.i += 1;
-                    }
-                    if let Some(y) = self.s[self.i..].chars().next() {
-                        s.push(y);
-                        self.i += y.len_utf8();
-                    } else {
-                        break;
-                    }
+            Value::Ident(s) if s == "/" => {
+                if comma || slash.is_some() {
+                    return None;
                 }
-                Some(Value::Str(s))
+                slash = Some(channels.len());
             }
-            c if c.is_ascii_digit()
-                || c == '.'
-                || (c == '-'
-                    && self.s[self.i..]
-                        .chars()
-                        .nth(1)
-                        .is_some_and(|n| n.is_ascii_digit() || n == '.'))
-                || (c == '+'
-                    && self.s[self.i..]
-                        .chars()
-                        .nth(1)
-                        .is_some_and(|n| n.is_ascii_digit() || n == '.')) =>
+            v => channels.push(v),
+        }
+    }
+    if channels.len() != 3 && channels.len() != 4 {
+        return None;
+    }
+    if slash.is_some_and(|n| n != 3)
+        || (!comma && channels.len() == 4 && slash != Some(3))
+        || (slash.is_some() && channels.len() != 4)
+    {
+        return None;
+    }
+    if comma {
+        if !matches!(args.len(), 5 | 7)
+            || !args.iter().enumerate().all(|(i, v)| {
+                if i % 2 == 1 {
+                    matches!(v,Value::Ident(s) if s==",")
+                } else {
+                    !matches!(v, Value::Ident(_))
+                }
+            })
+        {
+            return None;
+        }
+        if name == "hwb" {
+            return None;
+        }
+    }
+    let alpha = match channels.get(3) {
+        None => 1.0,
+        Some(Value::Number(n)) => *n,
+        Some(Value::Percentage(n)) => n / 100.0,
+        Some(Value::Ident(s)) if s == "none" && !comma => 0.0,
+        _ => return None,
+    };
+    let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let missing = |v: &Value| matches!(v,Value::Ident(s) if s=="none") && !comma;
+    let (r, g, b) = match name {
+        "rgb" | "rgba" => {
+            if comma
+                && !channels[..3].iter().all(|v| matches!(v, Value::Number(_)))
+                && !channels[..3]
+                    .iter()
+                    .all(|v| matches!(v, Value::Percentage(_)))
             {
-                // number [unit|%]
-                let start = self.i;
-                if matches!(self.peek(), Some('+') | Some('-')) {
-                    self.i += 1;
-                }
-                while matches!(self.peek(), Some(x) if x.is_ascii_digit() || x == '.') {
-                    self.i += 1;
-                }
-                // optional exponent: e[+-]?digits
-                if matches!(self.peek(), Some('e') | Some('E')) {
-                    let save = self.i;
-                    self.i += 1;
-                    if matches!(self.peek(), Some('+') | Some('-')) {
-                        self.i += 1;
-                    }
-                    let ds = self.i;
-                    while matches!(self.peek(), Some(x) if x.is_ascii_digit()) {
-                        self.i += 1;
-                    }
-                    if self.i == ds {
-                        self.i = save; // no digits after e — not an exponent
-                    }
-                }
-                let numstr = &self.s[start..self.i];
-                let num: f64 = numstr.parse().unwrap_or(0.0);
-                if self.peek() == Some('%') {
-                    self.i += 1;
-                    return Some(Value::Percentage(num));
-                }
-                let unit_str = self.ident().to_ascii_lowercase();
-                if unit_str.is_empty() {
-                    Some(Value::Number(num))
-                } else {
-                    let unit = match unit_str.as_str() {
-                        "px" => Unit::Px,
-                        "em" => Unit::Em,
-                        "rem" => Unit::Rem,
-                        "ex" => Unit::Ex,
-                        "ch" => Unit::Ch,
-                        "vw" => Unit::Vw,
-                        "vh" => Unit::Vh,
-                        "vmin" => Unit::Vmin,
-                        "vmax" => Unit::Vmax,
-                        "cm" => Unit::Cm,
-                        "mm" => Unit::Mm,
-                        "in" => Unit::In,
-                        "pt" => Unit::Pt,
-                        "pc" => Unit::Pc,
-                        "q" => Unit::Q,
-                        "s" => Unit::S,
-                        "ms" => Unit::Ms,
-                        "deg" => Unit::Deg,
-                        "rad" => Unit::Rad,
-                        "grad" => Unit::Grad,
-                        "turn" => Unit::Turn,
-                        "hz" => Unit::Hz,
-                        "khz" => Unit::Khz,
-                        "dpi" => Unit::Dpi,
-                        "dpcm" => Unit::Dpcm,
-                        "dppx" => Unit::Dppx,
-                        "fr" => Unit::Fr,
-                        _ => return Some(Value::Ident(format!("{numstr}{unit_str}"))),
-                    };
-                    Some(Value::Length(num, unit))
-                }
+                return None;
             }
-            c if c.is_alphabetic() || c == '-' || c == '_' || c >= '\u{80}' => {
-                let id = self.ident();
-                if self.peek() == Some('(') {
-                    self.i += 1;
-                    // parse function args
-                    let inner_start = self.i;
-                    let mut depth = 1;
-                    while let Some(x) = self.peek() {
-                        if x == '(' {
-                            depth += 1;
-                        } else if x == ')' {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        self.i += 1;
-                    }
-                    let inner = &self.s[inner_start..self.i];
-                    if self.peek() == Some(')') {
-                        self.i += 1;
-                    }
-                    let idl = id.to_ascii_lowercase();
-                    // colors/functions get structured handling
-                    match idl.as_str() {
-                        "rgb" | "rgba" => {
-                            let parts: Vec<f64> = inner
-                                .split([',', '/', ' '])
-                                .filter(|s| !s.is_empty())
-                                .map(|s| s.trim_end_matches('%').parse().unwrap_or(0.0))
-                                .collect();
-                            let pct: Vec<bool> = inner
-                                .split([',', '/', ' '])
-                                .filter(|s| !s.is_empty())
-                                .map(|s| s.ends_with('%'))
-                                .collect();
-                            if parts.len() >= 3 {
-                                let f = |i: usize| -> u8 {
-                                    let v = parts[i];
-                                    let p = pct.get(i).copied().unwrap_or(false);
-                                    (if p { v * 2.55 } else { v }).round().clamp(0.0, 255.0) as u8
-                                };
-                                let a = if parts.len() >= 4 {
-                                    (parts[3].clamp(0.0, 1.0) * 255.0) as u8
-                                } else {
-                                    255
-                                };
-                                return Some(Value::Color(f(0), f(1), f(2), a));
-                            }
-                        }
-                        "hsl" | "hsla" => {
-                            let parts: Vec<f64> = inner
-                                .split([',', '/', ' '])
-                                .filter(|s| !s.is_empty())
-                                .map(|s| s.trim_end_matches('%').parse().unwrap_or(0.0))
-                                .collect();
-                            if parts.len() >= 3 {
-                                let (r, g, b) = hsl(parts[0], parts[1] / 100.0, parts[2] / 100.0);
-                                let a = if parts.len() >= 4 {
-                                    (parts[3].clamp(0.0, 1.0) * 255.0) as u8
-                                } else {
-                                    255
-                                };
-                                return Some(Value::Color(r, g, b, a));
-                            }
-                        }
-                        "url" => {
-                            let u = inner.trim().trim_matches('"').trim_matches('\'');
-                            return Some(Value::Url(u.to_string()));
-                        }
-                        _ => {
-                            return Some(Value::Func(idl, parse_value(inner)));
-                        }
-                    }
-                    Some(Value::Func(idl, parse_value(inner)))
+            let channel = |v: &Value| match v {
+                Value::Number(n) => Some(n.clamp(0.0, 255.0).round() as u8),
+                Value::Percentage(n) => Some((n / 100.0 * 255.0).clamp(0.0, 255.0).round() as u8),
+                v if missing(v) => Some(0),
+                _ => None,
+            };
+            (
+                channel(channels[0])?,
+                channel(channels[1])?,
+                channel(channels[2])?,
+            )
+        }
+        _ => {
+            let hue = match channels[0] {
+                Value::Number(n) => *n,
+                Value::Length(n, Unit::Deg) => *n,
+                Value::Length(n, Unit::Rad) => n.to_degrees(),
+                Value::Length(n, Unit::Grad) => n * 0.9,
+                Value::Length(n, Unit::Turn) => n * 360.0,
+                v if missing(v) => 0.0,
+                _ => return None,
+            };
+            let percent = |v: &Value| match v {
+                Value::Percentage(n) => Some((n / 100.0).clamp(0.0, 1.0)),
+                v if missing(v) => Some(0.0),
+                _ => None,
+            };
+            let a = percent(channels[1])?;
+            let b = percent(channels[2])?;
+            if name == "hwb" {
+                if a + b >= 1.0 {
+                    let gray = (a / (a + b) * 255.0).round() as u8;
+                    (gray, gray, gray)
                 } else {
-                    let idl = id.to_ascii_lowercase();
-                    if let Some(c) = named_color(&idl) {
-                        Some(Value::Color(c.0, c.1, c.2, c.3))
-                    } else {
-                        Some(Value::Ident(idl))
-                    }
+                    let (r, g, bl) = hsl(hue, 1.0, 0.5);
+                    let f = |c: u8| ((c as f64 / 255.0 * (1.0 - a - b) + a) * 255.0).round() as u8;
+                    (f(r), f(g), f(bl))
                 }
-            }
-            _ => {
-                self.i += c.len_utf8();
-                Some(Value::Ident(c.to_string()))
+            } else {
+                hsl(hue, a, b)
             }
         }
-    }
+    };
+    Some(Value::Color(r, g, b, alpha))
 }
 
 fn parse_hex(s: &str) -> Option<(u8, u8, u8, u8)> {

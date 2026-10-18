@@ -250,3 +250,19 @@ requests, not a persistent session. Reloading a page for a click reruns its
 scripts, and state from a preceding image request is not retained. This small
 protocol supports remote inspection while leaving session management and a
 full browser UI outside the kernel.
+
+## CSS parsing boundaries
+
+The [CSS guide](css.md) documents the public parsing contracts and feature limits.
+`syntax` owns preprocessing, tokens, balanced components, generic rules, and
+declarations. `parser` adapts that representation to the existing renderer; it
+does not require all future CSS rule types to be enumerated to preserve them.
+`selector` owns grammar and specificity, while `matching` evaluates that shared
+structure against the DOM with an explicit scope and pseudo-state provider.
+
+`conditions` evaluates media/supports, `variables` retains and substitutes raw
+custom-property tokens after cascade, and `math` resolves dimensional length
+expressions. Keeping whitespace and token boundaries until those grammars run
+prevents string delimiters, escapes, and adjacent substitutions from silently
+changing a declaration's meaning. `style` coordinates cascade, inheritance, and
+shorthand expansion; layout consumes computed values through the existing API.

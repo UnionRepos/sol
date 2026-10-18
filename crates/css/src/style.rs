@@ -1,9 +1,9 @@
 //! Cascade, computed style, selector matching against the DOM.
 
+pub use crate::matching::{matches, matches_scoped};
 use crate::parser::{Rule, Stylesheet};
-use crate::selector::{AttrOp, Combinator, Compound, Pseudo, Selector};
 use crate::values::Value;
-use sol_dom::{Document, NodeData, NodeId};
+use sol_dom::{Document, NodeId};
 use std::collections::HashMap;
 
 /// Properties that inherit by default.
@@ -194,6 +194,7 @@ pub enum Clear {
 /// Resolve a Value to px. pct_base for percentages, font_size for em/rem.
 pub fn value_px(v: &Value, font_size: f64, pct_base: f64) -> Option<f64> {
     match v {
+        Value::Math(name, values) => crate::math::length(name, values, font_size, pct_base),
         Value::Number(n) => Some(*n),
         Value::Percentage(p) => Some(p / 100.0 * pct_base),
         Value::Length(n, u) => Some(match u {
@@ -202,8 +203,14 @@ pub fn value_px(v: &Value, font_size: f64, pct_base: f64) -> Option<f64> {
             crate::values::Unit::Rem => *n * 16.0,
             crate::values::Unit::Ex => *n * font_size * 0.5,
             crate::values::Unit::Ch => *n * font_size * 0.5,
-            crate::values::Unit::Vw => *n * pct_base / 100.0,
-            crate::values::Unit::Vh => *n * pct_base / 100.0,
+            crate::values::Unit::Vw => *n * viewport::WIDTH.get() / 100.0,
+            crate::values::Unit::Vh => *n * viewport::HEIGHT.get() / 100.0,
+            crate::values::Unit::Vmin => {
+                *n * viewport::WIDTH.get().min(viewport::HEIGHT.get()) / 100.0
+            }
+            crate::values::Unit::Vmax => {
+                *n * viewport::WIDTH.get().max(viewport::HEIGHT.get()) / 100.0
+            }
             crate::values::Unit::Cm => *n * 37.7953,
             crate::values::Unit::Mm => *n * 3.77953,
             crate::values::Unit::Q => *n * 0.944883,
@@ -211,7 +218,7 @@ pub fn value_px(v: &Value, font_size: f64, pct_base: f64) -> Option<f64> {
             crate::values::Unit::Pt => *n * 96.0 / 72.0,
             crate::values::Unit::Pc => *n * 16.0,
             crate::values::Unit::Pct => *n * pct_base / 100.0,
-            _ => *n,
+            _ => return None,
         }),
         _ => None,
     }
@@ -291,27 +298,38 @@ fn collect_rules(
     for r in rules {
         match r {
             Rule::Style(sr) => {
-                for sel in &sr.selectors {
-                    if matches(doc, el, sel, state) {
-                        for d in &sr.decls {
-                            for (name, value) in expand_decl(&d.name, d.value.clone()) {
-                                out.push(MatchedDecl {
-                                    name,
-                                    value,
-                                    important: d.important,
-                                    specificity: sel.specificity,
-                                    order: *order,
-                                    origin,
-                                });
-                                *order += 1;
-                            }
+                if let Some(specificity) = sr
+                    .selectors
+                    .iter()
+                    .filter(|selector| matches(doc, el, selector, state))
+                    .map(|selector| selector.specificity)
+                    .max()
+                {
+                    for declaration in &sr.decls {
+                        for (name, value) in
+                            expand_decl(&declaration.name, declaration.value.clone())
+                        {
+                            out.push(MatchedDecl {
+                                name,
+                                value,
+                                important: declaration.important,
+                                specificity,
+                                order: *order,
+                                origin,
+                            });
+                            *order += 1;
                         }
                     }
                 }
             }
             Rule::Media(m) => {
-                if media_matches(&m.queries) {
+                if crate::conditions::media_matches(&m.queries) {
                     collect_rules(doc, el, &m.rules, state, origin, order, out);
+                }
+            }
+            Rule::Supports(s) => {
+                if s.condition.supports() {
+                    collect_rules(doc, el, &s.rules, state, origin, order, out);
                 }
             }
             Rule::Import(_) | Rule::FontFace(_) | Rule::Other(_) => {}
@@ -328,47 +346,6 @@ pub mod viewport {
         pub static HEIGHT: Cell<f64> = const { Cell::new(600.0) };
         pub static MEDIUM: std::cell::RefCell<String> = std::cell::RefCell::new("screen".to_string());
     }
-}
-
-fn media_matches(queries: &[crate::parser::MediaQuery]) -> bool {
-    queries.iter().any(|q| {
-        if let Some(m) = &q.medium {
-            let raw = m.trim().to_ascii_lowercase();
-            let neg = raw.starts_with("not ");
-            let m2 = raw.trim_start_matches("not ").trim();
-            let cur = viewport::MEDIUM.with(|x| x.borrow().clone());
-            let hit = m2 == "all" || m2 == cur;
-            if neg == hit {
-                return false;
-            }
-        }
-        for (f, v) in &q.features {
-            let fl = f.as_str();
-            let val = crate::values::value1(v)
-                .and_then(|x| value_px(&x, 16.0, viewport::WIDTH.get()))
-                .unwrap_or(0.0);
-            let (w, h) = (viewport::WIDTH.get(), viewport::HEIGHT.get());
-            let ok = match fl {
-                "width" => (w - val).abs() < 0.01,
-                "min-width" => w >= val,
-                "max-width" => w <= val,
-                "height" => (h - val).abs() < 0.01,
-                "min-height" => h >= val,
-                "max-height" => h <= val,
-                "orientation" => {
-                    let want = v.trim().to_ascii_lowercase();
-                    (want == "landscape") == (w >= h)
-                }
-                "color" | "monochrome" | "color-index" => true,
-                "-webkit-min-device-pixel-ratio" | "min-resolution" => true,
-                _ => false,
-            };
-            if !ok {
-                return false;
-            }
-        }
-        true
-    })
 }
 
 fn presentational(doc: &Document, el: NodeId) -> Vec<(String, Vec<Value>)> {
@@ -560,17 +537,33 @@ fn presentational(doc: &Document, el: NodeId) -> Vec<(String, Vec<Value>)> {
 
 /// Expand shorthand properties into longhands.
 pub fn expand_decl(name: &str, vals: Vec<Value>) -> Vec<(String, Vec<Value>)> {
+    if crate::variables::deferred(&vals) {
+        return vec![(name.to_string(), vals)];
+    }
+    if vals.is_empty() {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     let n = name.to_ascii_lowercase();
+    let quad = |i: usize| -> Option<Value> {
+        if vals.len() > 4 {
+            return None;
+        }
+        let index = match (i, vals.len()) {
+            (2, 1 | 2) => 0,
+            (3, 2 | 3) => 1,
+            _ => i.min(vals.len() - 1),
+        };
+        vals.get(index).cloned()
+    };
     match n.as_str() {
         "margin" | "padding" => {
             let sides = ["top", "right", "bottom", "left"];
             for (i, side) in sides.iter().enumerate() {
-                let v = vals
-                    .get(i.min(vals.len() - 1))
-                    .cloned()
-                    .unwrap_or(Value::Number(0.0));
-                out.push((format!("{n}-{side}"), vec![v]));
+                let Some(value) = quad(i) else {
+                    return Vec::new();
+                };
+                out.push((format!("{n}-{side}"), vec![value]));
             }
         }
         "border-width" | "border-style" | "border-color" | "border-radius" => {
@@ -603,11 +596,11 @@ pub fn expand_decl(name: &str, vals: Vec<Value>) -> Vec<(String, Vec<Value>)> {
             } else {
                 let sides = ["top", "right", "bottom", "left"];
                 for (i, side) in sides.iter().enumerate() {
-                    let v = vals
-                        .get(i.min(vals.len() - 1))
-                        .cloned()
-                        .unwrap_or(Value::Number(0.0));
-                    out.push((format!("{n}-{side}"), vec![v]));
+                    let Some(value) = quad(i) else {
+                        return Vec::new();
+                    };
+                    let suffix = n.strip_prefix("border-").unwrap();
+                    out.push((format!("border-{side}-{suffix}"), vec![value]));
                 }
             }
         }
@@ -657,8 +650,9 @@ pub fn expand_decl(name: &str, vals: Vec<Value>) -> Vec<(String, Vec<Value>)> {
             if let Some(side) = s.strip_prefix("border-") {
                 if matches!(side, "top" | "right" | "bottom" | "left") {
                     for (k, v) in expand_decl("border", vals) {
-                        let k2 = k.replacen("border-", &format!("border-{side}-"), 1);
-                        out.push((k2, v));
+                        if k.starts_with(&format!("border-{side}-")) {
+                            out.push((k, v));
+                        }
                     }
                 } else {
                     out.push((n, vals));
@@ -849,213 +843,6 @@ pub fn expand_decl(name: &str, vals: Vec<Value>) -> Vec<(String, Vec<Value>)> {
     out
 }
 
-/// Selector match — right-to-left.
-pub fn matches(doc: &Document, el: NodeId, sel: &Selector, state: &dyn PseudoState) -> bool {
-    match_compound(doc, el, &sel.parts[0], state) && match_chain(doc, el, sel, 0, state)
-}
-
-fn match_chain(
-    doc: &Document,
-    el: NodeId,
-    sel: &Selector,
-    i: usize,
-    state: &dyn PseudoState,
-) -> bool {
-    if !match_compound(doc, el, &sel.parts[i], state) {
-        return false;
-    }
-    if i + 1 >= sel.parts.len() {
-        return true;
-    }
-    let comb = sel.combinators[i];
-    match comb {
-        Combinator::Descendant => {
-            let mut p = doc.parent(el);
-            while let Some(n) = p {
-                if doc.node(n).is_element() && match_chain(doc, n, sel, i + 1, state) {
-                    return true;
-                }
-                p = doc.parent(n);
-            }
-            false
-        }
-        Combinator::Child => match doc.parent(el) {
-            Some(p) if doc.node(p).is_element() => match_chain(doc, p, sel, i + 1, state),
-            _ => false,
-        },
-        Combinator::NextSibling => {
-            let sib = prev_elem_sibling(doc, el);
-            match sib {
-                Some(s) => match_chain(doc, s, sel, i + 1, state),
-                None => false,
-            }
-        }
-        Combinator::LaterSibling => {
-            let mut sib = prev_elem_sibling(doc, el);
-            while let Some(s) = sib {
-                if match_chain(doc, s, sel, i + 1, state) {
-                    return true;
-                }
-                sib = prev_elem_sibling(doc, s);
-            }
-            false
-        }
-    }
-}
-
-fn prev_elem_sibling(doc: &Document, n: NodeId) -> Option<NodeId> {
-    let p = doc.parent(n)?;
-    let kids = doc.children(p);
-    let i = kids.iter().position(|&k| k == n)?;
-    kids[..i]
-        .iter()
-        .rev()
-        .copied()
-        .find(|&k| doc.node(k).is_element())
-}
-
-fn elem_index(doc: &Document, n: NodeId, of_type: bool) -> usize {
-    let Some(p) = doc.parent(n) else { return 1 };
-    let kids = doc.children(p);
-    let tag = doc.tag(n).to_string();
-    let mut i = 0;
-    for &k in kids {
-        if !doc.node(k).is_element() {
-            continue;
-        }
-        if of_type && doc.tag(k) != tag {
-            continue;
-        }
-        i += 1;
-        if k == n {
-            return i;
-        }
-    }
-    i
-}
-
-fn nth_match(arg: &crate::selector::NthArg, idx: usize) -> bool {
-    use crate::selector::NthArg::*;
-    let i = idx as i32;
-    match arg {
-        Odd => i % 2 == 1,
-        Even => i % 2 == 0,
-        N(n) => i == *n,
-        AnB(a, b) => {
-            if *a == 0 {
-                i == *b
-            } else {
-                let d = i - b;
-                d % a == 0 && d / a >= 0
-            }
-        }
-    }
-}
-
-fn count_following(doc: &Document, n: NodeId, of_type: bool) -> usize {
-    let Some(p) = doc.parent(n) else { return 0 };
-    let kids = doc.children(p);
-    let tag = doc.tag(n).to_string();
-    let pos = kids.iter().position(|&k| k == n).unwrap_or(0);
-    kids[pos + 1..]
-        .iter()
-        .filter(|&&k| doc.node(k).is_element() && (!of_type || doc.tag(k) == tag))
-        .count()
-}
-
-fn match_compound(doc: &Document, el: NodeId, c: &Compound, state: &dyn PseudoState) -> bool {
-    let Some(e) = doc.node(el).element() else {
-        return false;
-    };
-    if let Some(t) = &c.tag {
-        if t != "*" && e.tag.as_ref() != t.as_str() {
-            return false;
-        }
-    }
-    if let Some(id) = &c.id {
-        if e.id() != Some(id.as_str()) {
-            return false;
-        }
-    }
-    for cl in &c.classes {
-        let has = e
-            .attr("class")
-            .map(|v| v.split_whitespace().any(|x| x == cl))
-            .unwrap_or(false);
-        if !has {
-            return false;
-        }
-    }
-    for at in &c.attrs {
-        let v = e.attr(&at.name);
-        let ok = match at.op {
-            AttrOp::Exists => v.is_some(),
-            AttrOp::Eq => v == Some(at.value.as_str()),
-            AttrOp::Includes => v
-                .map(|x| x.split_whitespace().any(|w| w == at.value))
-                .unwrap_or(false),
-            AttrOp::DashMatch => v
-                .map(|x| x == at.value || x.starts_with(&format!("{}-", at.value)))
-                .unwrap_or(false),
-            AttrOp::Prefix => v.map(|x| x.starts_with(&at.value)).unwrap_or(false),
-            AttrOp::Suffix => v.map(|x| x.ends_with(&at.value)).unwrap_or(false),
-            AttrOp::Substr => v.map(|x| x.contains(&at.value)).unwrap_or(false),
-        };
-        if !ok {
-            return false;
-        }
-    }
-    for p in &c.pseudos {
-        let ok = match p {
-            Pseudo::FirstChild => elem_index(doc, el, false) == 1,
-            Pseudo::LastChild => count_following(doc, el, false) == 0,
-            Pseudo::OnlyChild => {
-                elem_index(doc, el, false) == 1 && count_following(doc, el, false) == 0
-            }
-            Pseudo::FirstOfType => elem_index(doc, el, true) == 1,
-            Pseudo::LastOfType => count_following(doc, el, true) == 0,
-            Pseudo::OnlyOfType => {
-                elem_index(doc, el, true) == 1 && count_following(doc, el, true) == 0
-            }
-            Pseudo::NthChild(a) => nth_match(a, elem_index(doc, el, false)),
-            Pseudo::NthOfType(a) => nth_match(a, elem_index(doc, el, true)),
-            Pseudo::NthLastChild(a) => nth_match(a, count_following(doc, el, false) + 1),
-            Pseudo::Empty => doc.children(el).iter().all(|&k| match &doc.node(k).data {
-                NodeData::Element(_) => false,
-                NodeData::Text(t) => t.trim().is_empty(),
-                _ => true,
-            }),
-            Pseudo::Root => doc.parent(el).is_none_or(|p| !doc.node(p).is_element()),
-            Pseudo::Not(s) => !matches(doc, el, s, state),
-            Pseudo::Is(s) => matches(doc, el, s, state),
-            Pseudo::Has(s) => doc
-                .descendants(el)
-                .any(|d| doc.node(d).is_element() && matches(doc, d, s, state)),
-            Pseudo::Hover => state.is_hovered(el),
-            Pseudo::Active => state.is_active(el),
-            Pseudo::Focus => state.is_focused(el),
-            Pseudo::Link => &*e.tag == "a" && e.attr("href").is_some(),
-            Pseudo::Visited => {
-                &*e.tag == "a" && e.attr("href").map(|h| state.is_visited(h)).unwrap_or(false)
-            }
-            Pseudo::Checked => e.attr("checked").is_some() || e.attr("selected").is_some(),
-            Pseudo::Disabled => e.attr("disabled").is_some(),
-            Pseudo::Enabled => {
-                matches!(
-                    &*e.tag,
-                    "input" | "button" | "select" | "textarea" | "option"
-                ) && e.attr("disabled").is_none()
-            }
-            Pseudo::Target => state.is_target(el),
-            Pseudo::Unknown(_) => false,
-        };
-        if !ok {
-            return false;
-        }
-    }
-    true
-}
-
 /// Final computed style for an element.
 pub fn compute(
     _doc: &Document,
@@ -1076,9 +863,74 @@ pub fn compute(
             d.order,
         )
     });
-    let mut map: HashMap<String, Vec<Value>> = HashMap::new();
-    for d in sorted {
-        map.insert(d.name, d.value);
+    let mut source = HashMap::new();
+    if let Some(parent) = parent {
+        for (name, value) in &parent.map {
+            if name.starts_with("--") {
+                if let [Value::Components(values)] = value.as_slice() {
+                    source.insert(name.clone(), values.clone());
+                }
+            }
+        }
+    }
+    for decl in &sorted {
+        if !decl.name.starts_with("--") {
+            continue;
+        }
+        if let [Value::Components(value)] = decl.value.as_slice() {
+            let keyword = match crate::syntax::trim(value) {
+                [crate::syntax::ComponentValue::Token(token)] => {
+                    if let crate::syntax::TokenKind::Ident(name) = &token.kind {
+                        Some(name.to_ascii_lowercase())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            match keyword.as_deref() {
+                Some("initial") => {
+                    source.remove(&decl.name);
+                }
+                Some("inherit" | "unset" | "revert" | "revert-layer") => {
+                    source.remove(&decl.name);
+                    if let Some([Value::Components(value)]) = parent
+                        .and_then(|p| p.map.get(&decl.name))
+                        .map(Vec::as_slice)
+                    {
+                        source.insert(decl.name.clone(), value.clone());
+                    }
+                }
+                _ => {
+                    source.insert(decl.name.clone(), value.clone());
+                }
+            }
+        }
+    }
+    let mut variables = crate::variables::Variables::new(source);
+    let mut map = variables.computed();
+    for decl in sorted {
+        if decl.name.starts_with("--") {
+            continue;
+        }
+        let deferred = crate::variables::deferred(&decl.value);
+        let value = if let [Value::Components(values)] = decl.value.as_slice() {
+            variables
+                .substitute(values, 0)
+                .map(|values| crate::values::from_components(&values))
+                .filter(|value| crate::conditions::valid_computed_value(&decl.name, value))
+                .unwrap_or_else(|| vec![Value::Ident("unset".into())])
+        } else {
+            decl.value
+        };
+        let expanded = if deferred {
+            expand_decl(&decl.name, value)
+        } else {
+            vec![(decl.name, value)]
+        };
+        for (name, value) in expanded {
+            map.insert(name, value);
+        }
     }
     // resolve inherit/initial/unset + inherit-by-default
     let mut st = Style { map };

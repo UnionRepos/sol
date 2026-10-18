@@ -23,6 +23,7 @@ one process-wide memory allowance.
 | Retained batch response bodies | 64 MiB | Includes owned duplicate-response clones; not active worker allocations or cache copies |
 | HTTP cache | 128 entries and 32 MiB of bodies | LRU eviction; cache overhead is additional |
 | Remaining cache freshness | At most one hour | Explicit origin freshness reduced by response age and elapsed request time |
+| CSS tokens / component nesting | 1,000,000 tokens / 128 nesting levels | Syntax diagnostics; see [CSS parsing](css.md) for selector and variable limits |
 | Combined author stylesheet text | 16 MiB | Kernel collection budget, including separators |
 | Decoded images retained by one page | 64 MiB of shared pixels | Unique image allocations charged once; encoded responses and temporary decoder memory are additional |
 | Image decode input | 64 MiB | Shared codec input validation |
@@ -87,7 +88,9 @@ happens after parsing with initial layout available; parser-blocking execution,
 streaming script interaction, and the complete modern HTML platform are not
 implemented.
 
-CSS includes selectors, cascade/inheritance, media queries, common box properties,
+CSS has a general token/component/rule parser with unknown-syntax preservation.
+The [CSS guide](css.md) distinguishes that API from the renderer, which includes
+selectors, cascade/inheritance, custom properties, length math, media/supports, common box properties,
 rounded corners, and 2D transforms. Layout supports block and inline formatting,
 floats, flex, tables, list markers, replaced elements, and positioning. Grid is
 not implemented; recognized grid display values degrade to simpler display types.

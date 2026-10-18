@@ -18,7 +18,8 @@ an upstream error can make other pages fail in less obvious ways.
 | Corrupt images or allocation limits | [`sol_img`](../crates/img/src/lib.rs) | [`img.rs`](../crates/img/tests/img.rs), [`stability.rs`](../crates/img/tests/stability.rs) |
 | Node lifetime, ID lookup, dirty state | [`sol_dom`](../crates/dom/src/lib.rs), [`sol_util`](../crates/util/src/lib.rs) | Inline DOM/arena tests |
 | Repaired HTML structure or fragment context | [`html::builder`](../crates/html/src/builder.rs), [`tokenizer`](../crates/html/src/tokenizer.rs) | [`parse.rs`](../crates/html/tests/parse.rs) |
-| Selectors, inheritance, declarations | [`css::style`](../crates/css/src/style.rs), [`selector`](../crates/css/src/selector.rs), [`parser`](../crates/css/src/parser.rs) | [`css.rs`](../crates/css/tests/css.rs) |
+| CSS tokenization, general rules, recovery | [`css::syntax`](../crates/css/src/syntax/mod.rs) | [`syntax.rs`](../crates/css/tests/syntax.rs), [CSS API guide](css.md) |
+| Selectors, inheritance, declarations | [`css::style`](../crates/css/src/style.rs), [`selector`](../crates/css/src/selector.rs), [`parser`](../crates/css/src/parser.rs) | [`css.rs`](../crates/css/tests/css.rs), [`modern.rs`](../crates/css/tests/modern.rs) |
 | Shaping, fallback, glyph output | [`sol_text`](../crates/text/src/lib.rs) | [`text.rs`](../crates/text/tests/text.rs) |
 | Box geometry, line wrapping, flex/table layout | [`sol_layout`](../crates/layout/src/lib.rs) | [`layout.rs`](../crates/layout/tests/layout.rs) |
 | Alpha, scaling, clips, transforms | [`sol_paint`](../crates/paint/src/lib.rs), [`graphics`](../crates/paint/src/graphics.rs) | [`paint.rs`](../crates/paint/tests/paint.rs) |
