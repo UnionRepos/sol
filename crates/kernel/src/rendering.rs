@@ -28,7 +28,47 @@ impl Page {
         } else {
             &NoState as &dyn PseudoState
         };
-        self.styles = sol_css::style_document(&self.doc.borrow(), &sheets, st);
+        self.animation_timeline.time = self.animation_time.unwrap_or_else(|| {
+            if self.animation_initialized {
+                self.animation_epoch.elapsed().as_secs_f64()
+            } else {
+                0.0
+            }
+        });
+        sol_css::containers::set_boxes(self.container_boxes.clone());
+        self.styles = sol_css::style::style_document_with_timeline(
+            &self.doc.borrow(),
+            &sheets,
+            st,
+            &mut self.animation_timeline,
+        );
+        self.animation_initialized = true;
+    }
+
+    pub fn refresh_rendering(&mut self) {
+        let override_time = self.animation_time;
+        // A single sampled time keeps container feedback about size alone; an
+        // advancing animation could otherwise prevent an otherwise stable layout
+        // from converging and make screenshots depend on refresh duration.
+        for _ in 0..8 {
+            self.restyle();
+            self.animation_time = Some(self.animation_timeline.time);
+            self.load_backgrounds();
+            let previous = self.container_boxes.clone();
+            self.relayout();
+            if previous == self.container_boxes {
+                break;
+            }
+        }
+        self.animation_time = override_time;
+    }
+
+    pub fn sample_animations(&mut self, seconds: f64) {
+        if !seconds.is_finite() || seconds < 0.0 {
+            return;
+        }
+        self.animation_time = Some(seconds);
+        self.refresh_rendering();
     }
 
     /// Rebuild layout + display list.
@@ -67,17 +107,71 @@ impl Page {
             }
             walk(&out.root, &mut m, sol_paint::Transform::identity());
         }
+        self.container_boxes.clear();
+        let mut boxes = Vec::new();
+        out.root.walk(&mut boxes);
+        for box_ in boxes {
+            let Some(node) = box_
+                .node
+                .filter(|node| self.doc.borrow().node(*node).is_element())
+            else {
+                continue;
+            };
+            let Some(style) = &box_.style else { continue };
+            let kind = style.ident("container-type").unwrap_or_default();
+            if matches!(kind.as_str(), "size" | "inline-size") {
+                let content = box_.content_rect();
+                let names = style
+                    .get("container-name")
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| {
+                        if let sol_css::Value::Ident(name) = v {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                self.container_boxes.insert(
+                    node,
+                    sol_css::containers::Size {
+                        width: content.w as f64,
+                        height: content.h as f64,
+                        names,
+                        block: kind == "size",
+                    },
+                );
+            }
+        }
         self.layout = Some(out);
     }
 
     /// Render to a canvas (full page, top-aligned viewport).
     pub fn render(&self) -> Canvas {
         let (vw, vh) = (self.js.rt.viewport.0, self.js.rt.viewport.1);
+        sol_css::style::viewport::WIDTH.set(vw as f64);
+        sol_css::style::viewport::HEIGHT.set(vh as f64);
+        sol_css::style::viewport::ROOT_FONT_SIZE.set(
+            self.doc
+                .borrow()
+                .document_element()
+                .and_then(|node| self.styles.get(&node))
+                .and_then(|style| style.length_px("font-size", 16.0, 16.0))
+                .unwrap_or(16.0),
+        );
         let mut c = Canvas::new(vw, vh);
         c.clear(sol_paint::Rgba(255, 255, 255, 255));
         let fallback = self.fonts.face("sans-serif", 16.0, false, false);
         if let Some(o) = &self.layout {
-            sol_paint::render(&self.dl, &o.faces, &self.images, &fallback, &mut c)
+            sol_paint::render_with_resources(
+                &self.dl,
+                &o.faces,
+                &self.images,
+                &self.background_images,
+                &fallback,
+                &mut c,
+            )
         }
         c
     }
@@ -91,50 +185,7 @@ impl Page {
 
     /// Hit test: deepest box at (x,y) with a DOM node.
     pub fn hit(&self, x: f32, y: f32) -> Option<NodeId> {
-        // Descendants may escape ancestor rects (abs-pos, overflow), so search
-        // all kids; a box only claims the point if its own rect contains it.
-        fn find(b: &LBox, x: f32, y: f32) -> Option<NodeId> {
-            let (mut x, mut y) = (x, y);
-            if let Some(matrix) = box_transform(b) {
-                let inverse = matrix.invert()?;
-                let mut point = sol_paint::Point::from_xy(x, y);
-                inverse.map_point(&mut point);
-                (x, y) = (point.x, point.y);
-            }
-            if let Some(style) = &b.style {
-                let clips = style
-                    .ident("overflow-x")
-                    .or_else(|| style.ident("overflow"))
-                    .is_some_and(|value| matches!(value.as_str(), "hidden" | "scroll" | "auto"));
-                if clips && !sol_paint::contains_rounded(style, b.rect, x, y) {
-                    return None;
-                }
-                if style
-                    .ident("visibility")
-                    .is_some_and(|value| value == "hidden" || value == "collapse")
-                {
-                    return None;
-                }
-            }
-            // Later siblings are painted above earlier ones in this traversal.
-            // Testing them first keeps overlapping links consistent with the
-            // element the user can actually see at the pointer position.
-            for k in b.kids.iter().rev() {
-                if let Some(hit) = find(k, x, y) {
-                    return Some(hit);
-                }
-            }
-            if b.node.is_some()
-                && b.rect.contains(x, y)
-                && b.style
-                    .as_ref()
-                    .is_none_or(|style| sol_paint::contains_rounded(style, b.rect, x, y))
-            {
-                return b.node;
-            }
-            None
-        }
-        self.layout.as_ref().and_then(|o| find(&o.root, x, y))
+        self.dl.hit(x, y)
     }
 }
 

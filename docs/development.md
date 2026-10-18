@@ -160,7 +160,8 @@ sequential dependencies between scripts. Batch cookie updates have deterministic
 input-order replay; requests that need newly set cookies must not be placed in
 the same independent batch.
 
-Dirty flags do not schedule resource discovery. A dynamic resource feature needs
+Dirty refresh checks stylesheet-source fingerprints and CSS background resources.
+It does not dynamically discover newly inserted `<img>` resources. Another dynamic resource feature needs
 an explicit discovery, deduplication, cancellation/lifetime, and budget design;
 a style refresh alone cannot supply that behavior.
 
@@ -214,3 +215,15 @@ git -c user.name="lemonhub-io" -c user.email="lemonhub.io@icloud.com" commit ...
 Use the same identity for amendments, rebases, merges, and tags. Correct an
 unpushed commit made with another identity before pushing it. Source changes and
 documentation work do not by themselves require creating a commit.
+
+## CSS rendering regressions
+
+Use [the rendering guide](rendering.md) to locate the owner of a CSS feature.
+Pair style-level assertions with geometry or pixel checks when a change crosses
+layout/paint. For timed effects, use `Page::sample_animations` instead of sleeping.
+Keep the original screenshot fixture unchanged unless a reviewed rendering change
+requires updating its expected output. The showcase can be rendered with:
+
+```bash
+cargo run -p sol -- shot demo/css-rendering.html /tmp/sol-css-rendering.png 1000x640
+```

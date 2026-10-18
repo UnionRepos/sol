@@ -366,3 +366,59 @@ fn rounded_transform_screenshot_matches_fixture() {
         "screenshot differs in {differences} channels"
     );
 }
+
+#[test]
+fn layered_gradients_repeat_and_respect_rounded_clipping() {
+    let (canvas,_)=shot("<div></div>","body{margin:0} div{width:40px;height:20px;border-radius:8px;background:linear-gradient(to right,red,blue)}",64,32);
+    assert_eq!(px(&canvas, 0, 0), [255, 255, 255, 255]);
+    let left = px(&canvas, 2, 10);
+    let right = px(&canvas, 37, 10);
+    assert!(left[0] > 230 && left[2] < 25, "{left:?}");
+    assert!(right[2] > 230 && right[0] < 25, "{right:?}");
+    let (canvas,_)=shot("<div></div>","body{margin:0} div{width:40px;height:20px;background:repeating-linear-gradient(to right,red 0px 5px,blue 5px 10px)}",64,32);
+    assert_eq!(px(&canvas, 2, 10), [255, 0, 0, 255]);
+    assert_eq!(px(&canvas, 7, 10), [0, 0, 255, 255]);
+    assert_eq!(px(&canvas, 12, 10), [255, 0, 0, 255]);
+}
+
+#[test]
+fn radial_conic_and_multiple_background_layers_render() {
+    let (canvas,_)=shot("<div></div>","body{margin:0} div{width:40px;height:40px;background:radial-gradient(circle,red 0px 5px,blue 10px)}",64,64);
+    assert_eq!(px(&canvas, 20, 20), [255, 0, 0, 255]);
+    assert_eq!(px(&canvas, 3, 20), [0, 0, 255, 255]);
+    let (canvas,_)=shot("<div></div>","body{margin:0} div{width:40px;height:40px;background:conic-gradient(red 0deg 180deg,blue 180deg 360deg)}",64,64);
+    assert_eq!(px(&canvas, 30, 20), [255, 0, 0, 255]);
+    assert_eq!(px(&canvas, 10, 20), [0, 0, 255, 255]);
+    let (canvas,_)=shot("<div></div>","body{margin:0} div{width:40px;height:20px;background:linear-gradient(red,red) left top / 10px 10px no-repeat,linear-gradient(blue,blue)}",64,32);
+    assert_eq!(px(&canvas, 4, 4), [255, 0, 0, 255]);
+    assert_eq!(px(&canvas, 14, 4), [0, 0, 255, 255]);
+}
+
+#[test]
+fn shadows_and_outlines_do_not_fill_transparent_box_interiors() {
+    let (canvas,_)=shot("<div></div>","body{margin:0} div{position:absolute;left:10px;top:10px;width:20px;height:20px;box-shadow:8px 0 0 red;outline:2px solid blue}",64,48);
+    assert_eq!(px(&canvas, 20, 20), [255, 255, 255, 255]);
+    assert_eq!(px(&canvas, 35, 20), [255, 0, 0, 255]);
+    assert_eq!(px(&canvas, 9, 20), [0, 0, 255, 255]);
+    let (canvas, _) = shot(
+        "<div></div>",
+        "body{margin:0} div{width:20px;height:20px;background:white;box-shadow:inset 4px 0 0 red}",
+        40,
+        40,
+    );
+    assert_eq!(px(&canvas, 2, 10), [255, 0, 0, 255]);
+    assert_eq!(px(&canvas, 10, 10), [255, 255, 255, 255]);
+}
+
+#[test]
+fn body_gradients_propagate_to_an_empty_viewport() {
+    let (canvas, _) = shot(
+        "<body></body>",
+        "body{margin:0;background:linear-gradient(to right,red,blue)}",
+        64,
+        32,
+    );
+    let left = px(&canvas, 1, 20);
+    let right = px(&canvas, 62, 20);
+    assert!(left[0] > 240 && right[2] > 240);
+}

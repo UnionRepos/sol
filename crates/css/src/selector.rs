@@ -260,17 +260,14 @@ fn type_name(values: &[C], i: &mut usize) -> Option<(Option<String>, Option<Stri
     if delim(values.get(*i), '|') {
         *i += 1;
         let tag = match values.get(*i).and_then(C::kind) {
-            Some(T::Ident(s)) => Some(s.to_ascii_lowercase()),
+            Some(T::Ident(s)) => Some(s.clone()),
             Some(T::Delim('*')) => None,
             _ => return None,
         };
         *i += 1;
         Some((Some(first.unwrap_or_default()), tag))
     } else {
-        Some((
-            None,
-            first.filter(|s| s != "*").map(|s| s.to_ascii_lowercase()),
-        ))
+        Some((None, first.filter(|s| s != "*")))
     }
 }
 fn compound(values: &[C], i: &mut usize, depth: usize) -> Option<Compound> {
@@ -370,7 +367,7 @@ fn attribute(values: &[C]) -> Option<AttrSel> {
     let mut i = 0;
     skip_ws(values, &mut i);
     let first = match values.get(i).and_then(C::kind) {
-        Some(T::Ident(s)) => Some(s.to_ascii_lowercase()),
+        Some(T::Ident(s)) => Some(s.clone()),
         Some(T::Delim('*')) => Some("*".into()),
         Some(T::Delim('|')) => None,
         _ => return None,
@@ -380,7 +377,7 @@ fn attribute(values: &[C]) -> Option<AttrSel> {
     }
     let (namespace, name) = if delim(values.get(i), '|') && !delim(values.get(i + 1), '=') {
         i += 1;
-        let name = ident(values.get(i))?.to_ascii_lowercase();
+        let name = ident(values.get(i))?.to_string();
         i += 1;
         (Some(first.unwrap_or_default()), name)
     } else {

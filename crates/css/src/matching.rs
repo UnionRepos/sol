@@ -152,7 +152,13 @@ fn match_compound(
         }
     }
     if let Some(t) = &c.tag {
-        if t != "*" && e.tag.as_ref() != t.as_str() {
+        if t != "*"
+            && if e.namespace == sol_dom::Namespace::Html {
+                !e.tag.eq_ignore_ascii_case(t)
+            } else {
+                e.tag.as_ref() != t.as_str()
+            }
+        {
             return false;
         }
     }
@@ -182,10 +188,18 @@ fn match_compound(
                 .iter()
                 .find(|(name, _)| name.rsplit(':').next() == Some(&at.name))
                 .map(|(_, value)| value.as_str())
-        } else if at.namespace.as_ref().is_some_and(|ns| !ns.is_empty()) {
-            None
+        } else if let Some(namespace) = at.namespace.as_deref().filter(|ns| !ns.is_empty()) {
+            match namespace {
+                "http://www.w3.org/1999/xlink" => e.attr(&format!("xlink:{}", at.name)),
+                "http://www.w3.org/XML/1998/namespace" => e.attr(&format!("xml:{}", at.name)),
+                _ => None,
+            }
         } else {
-            e.attr(&at.name)
+            e.attr(&if e.namespace == sol_dom::Namespace::Html {
+                at.name.to_ascii_lowercase()
+            } else {
+                at.name.clone()
+            })
         };
         let Some(value) = value else { return false };
         let (value, expected) = if at.case == Some(false) {

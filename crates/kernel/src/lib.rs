@@ -12,6 +12,7 @@ mod navigation;
 mod rendering;
 mod resources;
 mod runtime;
+mod stylesheets;
 
 pub use interaction::Interact;
 
@@ -42,14 +43,21 @@ pub struct Page {
     fonts: Fonts,
     ua: Stylesheet,
     sheets: Vec<Stylesheet>,
+    stylesheet_fingerprint: Option<u64>,
     pub styles: HashMap<NodeId, Rc<Style>>,
     images: HashMap<NodeId, Rc<Image>>,
     image_sizes: HashMap<NodeId, (u32, u32)>,
+    background_images: HashMap<String, Rc<Image>>,
     pub layout: Option<Out>,
     pub dl: DisplayList,
     rects: Rc<RefCell<HashMap<NodeId, sol_layout::Rect>>>,
     nav_queue: Rc<RefCell<Vec<String>>>,
     dirty: bool,
+    animation_timeline: sol_css::animations::Timeline,
+    animation_epoch: std::time::Instant,
+    animation_time: Option<f64>,
+    animation_initialized: bool,
+    container_boxes: HashMap<NodeId, sol_css::containers::Size>,
     pub interact: Interact,
     pub console: Rc<RefCell<Vec<String>>>,
     /// Concurrent independent subresource requests, clamped to 1..8.
@@ -72,14 +80,21 @@ impl Page {
             fonts: Fonts::discover(),
             ua: sol_css::parser::parse(sol_css::UA_CSS),
             sheets: Vec::new(),
+            stylesheet_fingerprint: None,
             styles: HashMap::new(),
             images: HashMap::new(),
             image_sizes: HashMap::new(),
+            background_images: HashMap::new(),
             layout: None,
             dl: DisplayList::default(),
             rects: Rc::new(RefCell::new(HashMap::new())),
             nav_queue: Rc::new(RefCell::new(Vec::new())),
             dirty: true,
+            animation_timeline: sol_css::animations::Timeline::default(),
+            animation_epoch: std::time::Instant::now(),
+            animation_time: None,
+            animation_initialized: false,
+            container_boxes: HashMap::new(),
             interact: Interact::default(),
             console,
             resource_parallelism: 4,

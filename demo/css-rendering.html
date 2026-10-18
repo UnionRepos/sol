@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sol CSS rendering</title>
+<style>
+@font-face { font-family: "Sol Demo"; src: url("../crates/text/assets/DejaVuSans.ttf"); }
+@layer reset, design;
+@property --accent { syntax: "<color>"; inherits: true; initial-value: #7268ff; }
+@layer reset {
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Sol Demo", sans-serif; color: #20223a; }
+  h1, h2, p { margin: 0; }
+}
+@layer design {
+  body { background: linear-gradient(130deg, #eff2ff, #fff7f0); }
+  main { width: 920px; margin: 32px auto; }
+  header { padding: 28px; background: #fff; border: 1px solid #e1e3ef; border-radius: 18px; box-shadow: 0 10px 24px #292c5120; }
+  h1 { font-size: 34px; margin-bottom: 8px; }
+  header p { font-size: 15px; color: #656983; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 180px; gap: 18px; margin-top: 22px; }
+  .tile {
+    position: relative; padding: 20px; background: white; border-radius: 16px;
+    box-shadow: 0 8px 18px #292c5118;
+    &::before { content: attr(data-label); display: block; margin-bottom: 10px; font-size: 12px; color: #656983; }
+    & h2 { font-size: 20px; margin-bottom: 12px; }
+    & p { font-size: 13px; color: #656983; }
+  }
+  .gradient { background: linear-gradient(135deg, #7268ff, #c5a7ff); color: white; }
+  .gradient::before, .gradient p { color: white; }
+  .radial { background: radial-gradient(circle at 75% 25%, #ffe1a6, #ffc5b8 50%, #fff1eb); }
+  .layers { padding: 0; overflow: hidden; background: #eef0ff; }
+  .layers::before { padding: 20px; }
+  .back, .front { position: absolute; width: 100px; height: 85px; border-radius: 14px; }
+  .back { left: 45px; top: 70px; background: #7268ff; z-index: 1; }
+  .front { left: 105px; top: 90px; background: #ff947d; opacity: .7; z-index: 2; }
+  .scope { container: card / inline-size; }
+  .responsive { width: 180px; padding: 10px; background: #fff0df; border-radius: 9px; }
+  @container card (width > 200px) { .responsive { background: #e2f5ef; } }
+  .outline { outline: 2px solid #b6b1ff; outline-offset: 4px; }
+  .color { background: oklch(94% .03 180); }
+  .tag { display: inline-block; padding: 8px 12px; border-radius: 8px; background: var(--accent); color: white; }
+  footer { margin-top: 26px; font-size: 12px; color: #656983; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>CSS reaches the pixels.</h1><p>Grid layout, generated content, gradients, compositing, containers, and the cascade.</p></header>
+  <section class="grid">
+    <article class="tile gradient" data-label="01 / GRADIENT"><h2>Layered color</h2><p>Directional gradients share the same clipping and transform path as images.</p></article>
+    <article class="tile radial" data-label="02 / RADIAL"><h2>Soft geometry</h2><p>Rounded backgrounds and shadows preserve their alpha at the edges.</p></article>
+    <article class="tile layers" data-label="03 / STACKING"><div class="back"></div><div class="front"></div></article>
+    <article class="tile scope" data-label="04 / CONTAINER"><h2>Local decisions</h2><div class="responsive">This card checks its container width.</div></article>
+    <article class="tile outline" data-label="05 / CASCADE"><h2>Structured styling</h2><p>Named layers and nested rules produce ordinary computed styles.</p></article>
+    <article class="tile color" data-label="06 / CUSTOM PROPERTY"><h2>Typed accents</h2><span class="tag">Registered color</span></article>
+  </section>
+  <footer>Rendered by sol. Use Page::sample_animations(seconds) to sample keyframes and transitions deterministically.</footer>
+</main>
+</body>
+</html>

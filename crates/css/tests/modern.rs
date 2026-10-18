@@ -351,7 +351,7 @@ fn media_boolean_ranges_ratios_and_query_negation() {
 fn supports_boolean_declarations_selectors_and_unknowns() {
     for condition in [
         "(display:flex)",
-        "not (display:grid)",
+        "not (display:masonry)",
         "(display:flex) and (color:red)",
         "selector(:where(.a,#b))",
         "(--Theme:)",
@@ -374,7 +374,7 @@ fn supports_boolean_declarations_selectors_and_unknowns() {
         assert!(!supports(condition), "{condition}");
     }
     assert_eq!(
-        styled("@supports(display:flex){#x{color:red}} @supports(display:grid){#x{color:blue}}")
+        styled("@supports(display:flex){#x{color:red}} @supports(display:masonry){#x{color:blue}}")
             .color("color"),
         Some([255, 0, 0, 255])
     );
@@ -408,4 +408,119 @@ fn variable_expansion_budget_invalidates_exponential_values() {
     }
     css.push_str("width:var(--v18,7px)}");
     assert_eq!(styled(&css).length_px("width", 16.0, 800.0), Some(7.0));
+}
+
+#[test]
+fn cascade_layers_reverse_important_precedence_and_rollback_whole_layers() {
+    assert_eq!(styled("@layer base,theme; @layer theme{#x{color:blue}} @layer base{#x{color:red}} #x{color:green}").color("color"),Some([0,128,0,255]));
+    assert_eq!(styled("@layer base,theme; @layer theme{#x{color:blue!important}} @layer base{#x{color:red!important}} #x{color:green!important}").color("color"),Some([255,0,0,255]));
+    assert_eq!(
+        styled("@layer base{#x{color:red}} @layer theme{#x{color:blue} #x{color:revert-layer}}")
+            .color("color"),
+        Some([255, 0, 0, 255])
+    );
+    assert_eq!(
+        styled("@layer outer{@layer child{#x{color:red}} #x{color:blue}}").color("color"),
+        Some([0, 0, 255, 255])
+    );
+}
+
+#[test]
+fn nesting_expands_parent_lists_and_preserves_declaration_order() {
+    let style=styled("#p,.other{color:green; & > span{color:red; @media(min-width:1px){color:blue} color:orange; &::before{content:'prefix';color:purple}}}");
+    assert_eq!(style.color("color"), Some([255, 165, 0, 255]));
+    assert_eq!(
+        style.pseudos["before"].color("color"),
+        Some([128, 0, 128, 255])
+    );
+    assert_eq!(
+        styled("#p{span{width:10px} & > #x{height:20px}}").length_px("width", 16.0, 800.0),
+        Some(10.0)
+    );
+}
+
+#[test]
+fn perceptual_and_wide_gamut_colors_convert_to_the_canvas_space() {
+    for (value, expected) in [
+        ("oklab(100% 0 0)", [255, 255, 255, 255]),
+        ("oklch(0% 0 20)", [0, 0, 0, 255]),
+        ("lab(100% 0 0)", [255, 255, 255, 255]),
+        ("lch(0% 0 30)", [0, 0, 0, 255]),
+        ("color(display-p3 1 0 0)", [255, 0, 0, 255]),
+        ("color(srgb 1 0 0 / 50%)", [255, 0, 0, 128]),
+        ("color-mix(in srgb, red, blue)", [128, 0, 128, 255]),
+    ] {
+        assert_eq!(
+            parse_value(value),
+            vec![Value::Color(
+                expected[0],
+                expected[1],
+                expected[2],
+                expected[3]
+            )],
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn registered_custom_properties_enforce_types_defaults_and_inheritance() {
+    let style=styled("@property --space{syntax:'<length>';inherits:false;initial-value:7px} #p{--space:30px} #x{width:var(--space);--space:invalid}");
+    assert_eq!(style.length_px("width", 16.0, 800.0), Some(7.0));
+    let style=styled("@property --space{syntax:'<length>';inherits:false;initial-value:7px} #p{--space:30px} #x{width:var(--space)}");
+    assert_eq!(style.length_px("width", 16.0, 800.0), Some(7.0));
+    let style=styled("@property --space{syntax:'<length>';inherits:true;initial-value:7px} #p{--space:30px} #x{width:var(--space)}");
+    assert_eq!(style.length_px("width", 16.0, 800.0), Some(30.0));
+}
+
+#[test]
+fn stylesheet_namespace_prefixes_select_html_and_reject_unknown_prefixes() {
+    assert_eq!(styled("@namespace h 'http://www.w3.org/1999/xhtml'; h|span{color:red} missing|span{color:blue}").color("color"),Some([255,0,0,255]));
+}
+
+#[test]
+fn inherited_font_sizes_are_computed_before_child_relative_sizes() {
+    assert_eq!(
+        styled("html{font-size:20px} #p{font-size:2em} #x{font-size:150%}").length_px(
+            "font-size",
+            16.0,
+            800.0
+        ),
+        Some(60.0)
+    );
+}
+
+#[test]
+fn oklab_chromatic_channels_use_the_original_lightness_in_each_lms_component() {
+    let value = parse_value("oklab(.6279553606 .2248630611 .1258462985)");
+    assert!(
+        matches!(value.as_slice(), [Value::Color(255, 0, 0, 255)]),
+        "{value:?}"
+    );
+    let value = parse_value("oklch(94% .03 180)");
+    assert!(
+        matches!(value.as_slice(),[Value::Color(r,g,b,255)] if *g>*r&&*g>*b&&*r>200&&*b>200),
+        "{value:?}"
+    );
+}
+
+#[test]
+fn registered_non_inherited_values_reset_on_pseudos_and_revert_leaves_author_origin() {
+    let style=styled("@property --accent{syntax:'<color>';inherits:false;initial-value:green} #x{--accent:red} #x::before{content:'x';color:var(--accent)}");
+    assert_eq!(
+        style.pseudos["before"].color("color"),
+        Some([0, 128, 0, 255])
+    );
+    let doc = document("<span id=x style='color:revert'></span>");
+    let ua = parse_stylesheet("span{color:green}");
+    let author = parse_stylesheet("span{color:red}");
+    let result = sol_css::style_document(&doc, &[&ua, &author], &NoState);
+    assert_eq!(
+        result[&find(&doc, "x")].color("color"),
+        Some([0, 128, 0, 255])
+    );
+    assert_eq!(
+        styled(":is(#x,missing|span){color:red}").color("color"),
+        Some([255, 0, 0, 255])
+    );
 }

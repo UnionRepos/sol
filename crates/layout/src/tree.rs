@@ -15,6 +15,7 @@ pub struct Ctx<'a> {
     pub doc: &'a Document,
     pub input: &'a LayoutInput<'a>,
     pub faces: &'a mut FaceSet,
+    pub(crate) counters: crate::generated::Counters,
 }
 
 pub fn build(ctx: &mut Ctx) -> LBox {
@@ -44,7 +45,20 @@ fn is_inlineish(b: &LBox) -> bool {
     ) && b.float == sol_css::Float::None
 }
 
-fn build_node(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: &mut LBox) {
+fn build_node(ctx: &mut Ctx, n: NodeId, pending: &mut Vec<LBox>, parent: &mut LBox) {
+    if let Some(style) = ctx
+        .input
+        .styles
+        .get(&n)
+        .cloned()
+        .filter(|style| style.display() != Display::None)
+    {
+        crate::generated::enter(ctx, n, &style, false);
+    }
+    build_node_inner(ctx, n, pending, parent);
+    crate::generated::leave(ctx, n);
+}
+fn build_node_inner(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: &mut LBox) {
     let node = ctx.doc.node(n);
     match &node.data {
         NodeData::Text(t) => {
@@ -92,11 +106,22 @@ fn build_node(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: 
                 return;
             }
             match disp {
-                Display::Flex | Display::InlineFlex => {
-                    flush_inline(pending_inline, parent);
-                    let mut b = LBox::new(Kind::Block);
+                Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid => {
+                    let inline = matches!(disp, Display::InlineFlex | Display::InlineGrid);
+                    if !inline {
+                        flush_inline(pending_inline, parent);
+                    }
+                    let mut b = LBox::new(if inline {
+                        Kind::InlineBlock
+                    } else {
+                        Kind::Block
+                    });
                     b.node = Some(n);
-                    b.style = Some(style);
+                    b.style = Some(style.clone());
+                    if let Some(mut before) = crate::generated::box_for(ctx, n, &style, "before") {
+                        before.kind = Kind::Block;
+                        b.kids.push(before);
+                    }
                     // Flex items (CSS-FLEXBOX §4): each element child is its
                     // own item — inline-level boxes are blockified, never
                     // co-wrapped; each contiguous text run gets one anonymous
@@ -116,7 +141,9 @@ fn build_node(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: 
                         if b.kids.len() > before {
                             // a block-level child pushed straight to b.kids —
                             // any text before it forms an anonymous item first
+                            let added = b.kids.split_off(before);
                             flush_run(&mut b, &mut run);
+                            b.kids.extend(added);
                         }
                         for mut ib in pend.drain(..) {
                             match ib.kind {
@@ -139,7 +166,15 @@ fn build_node(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: 
                         }
                     }
                     flush_run(&mut b, &mut run);
-                    parent.kids.push(b);
+                    if let Some(mut after) = crate::generated::box_for(ctx, n, &style, "after") {
+                        after.kind = Kind::Block;
+                        b.kids.push(after);
+                    }
+                    if inline {
+                        pending_inline.push(b);
+                    } else {
+                        parent.kids.push(b);
+                    }
                 }
                 Display::Inline | Display::InlineBlock => {
                     let kind = if disp == Display::Inline {
@@ -153,8 +188,14 @@ fn build_node(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: 
                     b.float = style.float();
                     // list-item markers handled in block layout
                     let mut inner: Vec<LBox> = Vec::new();
+                    if let Some(before) = crate::generated::box_for(ctx, n, &style, "before") {
+                        append_generated(before, &mut inner, &mut b);
+                    }
                     for &c in ctx.doc.children(n) {
                         build_node(ctx, c, &mut inner, &mut b);
+                    }
+                    if let Some(after) = crate::generated::box_for(ctx, n, &style, "after") {
+                        append_generated(after, &mut inner, &mut b);
                     }
                     flush_inline(&mut inner, &mut b);
                     pending_inline.push(b);
@@ -181,8 +222,14 @@ fn build_node(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: 
                         }
                     }
                     let mut inner: Vec<LBox> = Vec::new();
+                    if let Some(before) = crate::generated::box_for(ctx, n, &style, "before") {
+                        append_generated(before, &mut inner, &mut b);
+                    }
                     for &c in ctx.doc.children(n) {
                         build_node(ctx, c, &mut inner, &mut b);
+                    }
+                    if let Some(after) = crate::generated::box_for(ctx, n, &style, "after") {
+                        append_generated(after, &mut inner, &mut b);
                     }
                     flush_inline(&mut inner, &mut b);
                     flush_inline(pending_inline, parent);
@@ -191,6 +238,15 @@ fn build_node(ctx: &mut Ctx, n: NodeId, pending_inline: &mut Vec<LBox>, parent: 
             }
         }
         _ => {}
+    }
+}
+
+fn append_generated(box_: LBox, pending: &mut Vec<LBox>, parent: &mut LBox) {
+    if is_inlineish(&box_) {
+        pending.push(box_);
+    } else {
+        flush_inline(pending, parent);
+        parent.kids.push(box_);
     }
 }
 
@@ -216,6 +272,12 @@ fn is_replaced(tag: &str) -> bool {
 /// Build the ::marker substitute box for display:list-item elements.
 /// Counter = index of this li among list-item element siblings.
 fn marker_box(ctx: &mut Ctx, n: NodeId, style: &Rc<sol_css::Style>) -> Option<LBox> {
+    if let Some(mut marker) = crate::generated::box_for(ctx, n, style, "marker") {
+        let text = marker.kids.pop()?.text?;
+        marker.kind = Kind::Marker;
+        marker.text = Some(text);
+        return Some(marker);
+    }
     let lst = style
         .ident("list-style-type")
         .unwrap_or_else(|| "disc".into());
@@ -276,10 +338,16 @@ pub fn make_face(input: &crate::LayoutInput, style: Option<&sol_css::Style>) -> 
     let fam_val = st.get("font-family");
     let fam = fam_val
         .map(|v| {
-            v.iter()
-                .filter_map(|x| match x {
-                    Value::Ident(s) | Value::Str(s) => Some(s.clone()),
-                    _ => None,
+            v.split(|value| matches!(value,Value::Ident(s) if s==","))
+                .map(|group| {
+                    group
+                        .iter()
+                        .filter_map(|value| match value {
+                            Value::Ident(s) | Value::Str(s) => Some(s.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 })
                 .collect::<Vec<_>>()
                 .join(",")
@@ -306,7 +374,7 @@ pub fn make_face(input: &crate::LayoutInput, style: Option<&sol_css::Style>) -> 
     );
     input
         .fonts
-        .face(&fam, px.max(1.0), bold, italic)
+        .face(&fam, px.max(0.0), bold, italic)
         .with_direction(match st.ident("direction").as_deref() {
             Some("rtl") => sol_text::Direction::Rtl,
             Some("ltr") => sol_text::Direction::Ltr,

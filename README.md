@@ -19,6 +19,7 @@ fetch → HTML parse → CSS cascade → layout → display list → raster → 
 |---|---|
 | [Building, commands, and embedding](docs/usage.md) | First build, exact command behavior, exit codes, remote viewing, runnable Rust examples |
 | [Architecture and design rationale](docs/architecture.md) | Ownership, page lifecycle, execution order, module boundaries, caching, rendering geometry |
+| [CSS rendering](docs/rendering.md) | Layout, gradients and images, stacking, generated content, animation sampling, resource loading, and exact limits |
 | [CSS parsing and evaluation](docs/css.md) | Syntax APIs, preservation, selectors, variables, math, conditional rules, and rendering boundaries |
 | [Continuous integration and delivery](docs/ci-cd.md) | Validation gates, release archives, manual runs, version-tag publication |
 | [Development and maintenance](docs/development.md) | Source navigation, focused tests, fixtures, extension invariants, comment conventions |
@@ -35,10 +36,10 @@ fetch → HTML parse → CSS cascade → layout → display list → raster → 
 | `sol_img` | bounded PNG (+interlace), GIF, BMP decoders; PNG encoder and fallible image allocation |
 | `sol_dom` | arena DOM with generational `NodeId`, dirty-flag subtrees, serialization |
 | `sol_html` | HTML5 tokenizer + tree builder (insertion modes, adoption agency, foster parenting, fragments) |
-| `sol_css` | General CSS token/component AST, selector engine, cascade/inheritance, custom properties, length math, media/supports conditions, computed `Style`, UA stylesheet |
+| `sol_css` | General CSS token/component AST, selectors, nesting/layers, custom properties/registrations, length math, color conversion, media/container conditions, animation/transition sampling, computed `Style`, UA stylesheet |
 | `sol_text` | validated TTF/OpenType/CFF/TTC access, tiny-skia glyph rasterizer, script shaping, bidirectional runs, grapheme-aware fallback, cached font discovery, bundled DejaVu Sans |
-| `sol_layout` | box-tree builder; block, inline/IFC, floats, flexbox, table, abs/fixed positioning, list markers |
-| `sol_paint` | display list + software canvas: clips, antialiased rectangles/text, correct straight-alpha blending, bilinear image scaling, rounded borders/clips, 2D transforms |
+| `sol_layout` | box-tree builder; block, inline/IFC, floats, flexbox, grid, table, abs/fixed positioning, generated content/counters, list markers |
+| `sol_paint` | display list + software canvas: clips, antialiased rectangles/text, correct straight-alpha blending, bilinear image scaling, rounded borders/clips, layered backgrounds and gradients, opacity groups, shadows, stacking and hit candidates, 2D transforms |
 | `sol_js` | ES-subset interpreter: parser, tree-walk eval, mark-sweep GC, regex engine, microtasks, timers, DOM/window bindings, `fetch` |
 | `sol_kernel` | `Page` orchestrator: navigation, subresources, script order, incremental re-style/layout, hit-test, click/anchor navigation, pseudo-state (`:hover`/`:active`/`:focus`/`:visited`/`:target`) |
 | `sol` (bin) | command line + remote-window server |
@@ -185,10 +186,12 @@ publish tested Linux archives; see [CI/CD](docs/ci-cd.md) for the release proces
 
 ## Known limits
 
-Block/inline/flex/table + positioning cover the common box model; no CSS
-grid yet. JS implements a working ES subset (closures, classes, arrows,
+Block/inline/flex/table/grid and positioning cover common layouts; grid sizing
+and placement retain the limits in the [rendering guide](docs/rendering.md).
+JS implements a working ES subset (closures, classes, arrows,
 promises, regex, Map/Set, errors) — not full ES2024. Text is horizontal; no vertical
-writing, downloadable web fonts, or color emoji. Bidirectional formatting across
+writing or color emoji. Downloadable fonts support TTF/OpenType, with no
+WOFF/WOFF2 decoder. Bidirectional formatting across
 nested inline boundaries is still approximate. Images support PNG/GIF/BMP;
 JPEG/WebP are not implemented. Transforms are 2D; mixed-style rounded borders
 are approximated. One cookie jar with no public-suffix-list validation. The cache

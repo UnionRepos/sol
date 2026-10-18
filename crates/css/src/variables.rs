@@ -15,6 +15,36 @@ pub(crate) fn contains_var(values: &[C]) -> bool {
 pub(crate) fn declaration_value(name: &str, values: &[C]) -> Vec<Value> {
     if name.starts_with("--") || contains_var(values) {
         vec![Value::Components(values.to_vec())]
+    } else if [
+        "animation",
+        "animation-name",
+        "font-family",
+        "container",
+        "container-name",
+        "grid-area",
+        "grid-column",
+        "grid-row",
+        "grid-column-start",
+        "grid-column-end",
+        "grid-row-start",
+        "grid-row-end",
+        "counter-reset",
+        "counter-set",
+        "counter-increment",
+    ]
+    .contains(&name)
+    {
+        values
+            .iter()
+            .filter(|v| !v.is_whitespace())
+            .flat_map(|value| {
+                if let Some(T::Ident(name)) = value.kind() {
+                    vec![Value::Ident(name.clone())]
+                } else {
+                    crate::values::from_components(std::slice::from_ref(value))
+                }
+            })
+            .collect()
     } else {
         crate::values::from_components(values)
     }
@@ -23,13 +53,19 @@ pub(crate) fn deferred(values: &[Value]) -> bool {
     matches!(values, [Value::Components(_)])
 }
 
-pub(crate) struct Variables {
+pub(crate) struct Variables<'a> {
     source: HashMap<String, Vec<C>>,
     cache: HashMap<String, Option<Vec<C>>>,
     cyclic: HashSet<String>,
+    properties: &'a HashMap<String, crate::properties::Registration>,
+    fallbacks: HashMap<String, Vec<C>>,
 }
-impl Variables {
-    pub(crate) fn new(source: HashMap<String, Vec<C>>) -> Self {
+impl<'a> Variables<'a> {
+    pub(crate) fn new(
+        source: HashMap<String, Vec<C>>,
+        properties: &'a HashMap<String, crate::properties::Registration>,
+        fallbacks: HashMap<String, Vec<C>>,
+    ) -> Self {
         let mut cyclic = HashSet::new();
         let mut done = HashSet::new();
         let mut stack = Vec::new();
@@ -43,17 +79,36 @@ impl Variables {
             source,
             cache: HashMap::new(),
             cyclic,
+            properties,
+            fallbacks,
         }
     }
     fn property(&mut self, name: &str, depth: usize) -> Option<Vec<C>> {
         if self.cyclic.contains(name) || depth > MAX_VARIABLE_DEPTH {
-            return None;
+            return self
+                .properties
+                .contains_key(name)
+                .then(|| self.fallbacks.get(name).cloned())
+                .flatten();
         }
         if let Some(cached) = self.cache.get(name) {
             return cached.clone();
         }
-        let source = self.source.get(name)?.clone();
-        let value = self.substitute(&source, depth + 1);
+        let source = self
+            .source
+            .get(name)
+            .or_else(|| {
+                self.fallbacks
+                    .get(name)
+                    .filter(|_| self.properties.contains_key(name))
+            })?
+            .clone();
+        let mut value = self.substitute(&source, depth + 1);
+        if let Some(property) = self.properties.get(name) {
+            if value.as_ref().is_none_or(|value| !property.accepts(value)) {
+                value = self.fallbacks.get(name).cloned();
+            }
+        }
         self.cache.insert(name.to_string(), value.clone());
         value
     }

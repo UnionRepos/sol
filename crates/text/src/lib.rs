@@ -109,6 +109,7 @@ struct Entry {
     bold: bool,
     italic: bool,
     font: Rc<Font>,
+    custom: bool,
 }
 
 impl Fonts {
@@ -203,6 +204,36 @@ impl Fonts {
         }
     }
 
+    pub fn register(
+        &mut self,
+        family: &str,
+        data: Vec<u8>,
+        bold: bool,
+        italic: bool,
+    ) -> Result<(), String> {
+        if data.len() > 32 * 1024 * 1024 {
+            return Err("font exceeds 32 MiB".into());
+        }
+        let font = Rc::new(Font::load(data)?);
+        // A page-specific alias must win over a discovered family with the same
+        // name, while keeping the thread-local system catalog unchanged.
+        self.entries.insert(
+            0,
+            Entry {
+                family: family.into(),
+                style: String::new(),
+                generic: Generic::Sans,
+                bold,
+                italic,
+                font,
+                custom: true,
+            },
+        );
+        self.default += 1;
+        self.face_cache.borrow_mut().clear();
+        Ok(())
+    }
+
     /// Resolve family list + weight + italic to a Face.
     pub fn face(&self, families: &str, px: f32, bold: bool, italic: bool) -> Face {
         let px = font_size(px);
@@ -242,15 +273,11 @@ impl Fonts {
                 _ => None,
             };
             if let Some(g) = generic {
-                if let Some(i) = self.pick(|e| e.generic == g, bold, italic) {
+                if let Some(i) = self.pick(|e| !e.custom && e.generic == g, bold, italic) {
                     return i;
                 }
             } else {
-                if let Some(i) = self.pick(
-                    |e| e.family.to_ascii_lowercase().contains(&fam),
-                    bold,
-                    italic,
-                ) {
+                if let Some(i) = self.pick(|e| e.family.eq_ignore_ascii_case(&fam), bold, italic) {
                     return i;
                 }
             }
@@ -336,6 +363,7 @@ impl Entry {
             bold: font.bold,
             italic: font.italic,
             font: Rc::new(font),
+            custom: false,
         }
     }
 }

@@ -258,8 +258,6 @@ pub fn lay_block(
             cb
         };
         position_absolute(lc, b, pcb);
-        lc.deferred
-            .push(std::mem::replace(b, LBox::new(Kind::Block)));
         return y;
     }
 
@@ -326,9 +324,6 @@ pub fn lay_block(
         None => (base_r - base_l - b.margin.horiz() - extras).max(0.0),
     };
     let mut border_w = content_w + extras;
-    if spec_w.is_some() && !border_box {
-        border_w = border_w.min((base_r - base_l - b.margin.horiz()).max(0.0));
-    }
 
     let mut x = base_l + b.margin.left;
     if ml_auto && mr_auto && spec_w.is_some() {
@@ -342,10 +337,10 @@ pub fn lay_block(
         b.margin.left = x - base_l;
     }
     if let Some(mw) = len(st.as_ref(), "min-width", avail_w) {
-        border_w = border_w.max(mw);
+        border_w = border_w.max(mw + if border_box { 0.0 } else { extras });
     }
     if let Some(mw) = len(st.as_ref(), "max-width", avail_w) {
-        border_w = border_w.min(mw);
+        border_w = border_w.min(mw + if border_box { 0.0 } else { extras });
     }
     b.rect.x = x;
     b.rect.y = y;
@@ -378,12 +373,29 @@ pub fn lay_block(
                     x: b.rect.x + b.border.left,
                     y: b.rect.y + b.border.top,
                     w: inner_w + b.padding.horiz(),
-                    h: lc.vh,
+                    h: len(st.as_ref(), "height", lc.vh)
+                        .map(|height| {
+                            height
+                                + if border_box {
+                                    -b.border.vert()
+                                } else {
+                                    b.padding.vert()
+                                }
+                        })
+                        .unwrap_or(lc.vh),
                 }
             } else {
                 cb
             };
-            let content_bottom = if st
+            let grid = st.as_ref().is_some_and(|style| {
+                matches!(
+                    style.display(),
+                    sol_css::Display::Grid | sol_css::Display::InlineGrid
+                )
+            });
+            let content_bottom = if grid {
+                crate::grid::layout_grid(lc, b, inner_x, inner_y, inner_w)
+            } else if st
                 .as_ref()
                 .map(|s| {
                     matches!(
@@ -398,6 +410,12 @@ pub fn lay_block(
                 lay_children(lc, b, inner_x, inner_y, inner_w, fref, ncb)
             };
             let mut h = content_bottom - inner_y;
+            if st
+                .as_ref()
+                .is_some_and(|style| style.ident("container-type").as_deref() == Some("size"))
+            {
+                h = 0.0;
+            }
             if new_bfc {
                 h = h.max(local_floats.bottom() - inner_y);
             }
@@ -468,7 +486,15 @@ fn position_absolute(lc: &mut LC, b: &mut LBox, cb: Rect) {
         w: inner_w + b.padding.horiz(),
         h: lc.vh,
     };
-    let content_bottom = lay_children(lc, b, inner_x, inner_y, inner_w, &mut floats, self_cb);
+    let content_bottom = match st.as_ref().map(|s| s.display()) {
+        Some(sol_css::Display::Grid | sol_css::Display::InlineGrid) => {
+            crate::grid::layout_grid(lc, b, inner_x, inner_y, inner_w)
+        }
+        Some(sol_css::Display::Flex | sol_css::Display::InlineFlex) => {
+            crate::flex::layout_flex(lc, b, inner_x, inner_y, inner_w)
+        }
+        _ => lay_children(lc, b, inner_x, inner_y, inner_w, &mut floats, self_cb),
+    };
     let mut h = content_bottom - inner_y;
     h = h.max(floats.bottom() - inner_y);
     if let Some(eh) = len(st.as_ref(), "height", cb.h) {
@@ -622,6 +648,9 @@ fn is_inline_kind(b: &LBox) -> bool {
         b.kind,
         Kind::Inline | Kind::InlineBlock | Kind::Text | Kind::Replaced | Kind::Marker
     ) && b.float == Float::None
+        && b.style
+            .as_ref()
+            .is_none_or(|s| !matches!(s.position(), Position::Absolute | Position::Fixed))
 }
 
 // ---------- inline formatting ----------
@@ -898,8 +927,15 @@ fn layout_ifc(
                     };
                     let inner_y = b.border.top + b.padding.top;
                     let inner_x = b.border.left + b.padding.left;
-                    let content_bottom =
-                        lay_children(lc, &mut b, inner_x, inner_y, inner_w, &mut local, cb);
+                    let content_bottom = match st2.as_ref().map(|s| s.display()) {
+                        Some(sol_css::Display::Grid | sol_css::Display::InlineGrid) => {
+                            crate::grid::layout_grid(lc, &mut b, inner_x, inner_y, inner_w)
+                        }
+                        Some(sol_css::Display::Flex | sol_css::Display::InlineFlex) => {
+                            crate::flex::layout_flex(lc, &mut b, inner_x, inner_y, inner_w)
+                        }
+                        _ => lay_children(lc, &mut b, inner_x, inner_y, inner_w, &mut local, cb),
+                    };
                     let mut h = content_bottom - inner_y;
                     h = h.max(local.bottom() - inner_y);
                     if let Some(eh) = len(st2.as_ref(), "height", lc.vh) {
@@ -1051,8 +1087,9 @@ fn layout_ifc(
                 }
                 Make::Existing(bi) => {
                     let mut sb = std::mem::replace(&mut boxes[*bi], LBox::new(Kind::Block));
-                    sb.rect.x = pen + sb.margin.left;
-                    sb.rect.y = iy;
+                    let dx = pen + sb.margin.left - sb.rect.x;
+                    let dy = iy - sb.rect.y;
+                    shift(&mut sb, dx, dy);
                     sb.baseline = it.baseline;
                     line.kids.push(sb);
                 }

@@ -268,3 +268,21 @@ fn fallback_keeps_grapheme_clusters_and_uses_fallback_metrics() {
         sol_text::Face::new(primary, 24.0).measure(text)
     );
 }
+
+#[test]
+fn page_font_aliases_do_not_replace_generic_or_system_font_choices() {
+    let mut fonts = sol_text::Fonts::from_dirs(Vec::new());
+    let system = fonts.face("sans-serif", 16.0, false, false);
+    fonts
+        .register(
+            "Page Alias",
+            include_bytes!("../assets/DejaVuSans.ttf").to_vec(),
+            false,
+            false,
+        )
+        .unwrap();
+    let alias = fonts.face("Page Alias", 16.0, false, false);
+    let generic = fonts.face("sans-serif", 16.0, false, false);
+    assert!(!std::rc::Rc::ptr_eq(&system.font, &alias.font));
+    assert!(std::rc::Rc::ptr_eq(&system.font, &generic.font));
+}

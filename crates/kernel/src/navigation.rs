@@ -42,8 +42,15 @@ impl Page {
         self.doc.borrow_mut().base_url = url.serialize();
         self.url = Some(url.clone());
         self.sheets.clear();
+        self.stylesheet_fingerprint = None;
+        self.animation_timeline = sol_css::animations::Timeline::default();
+        self.animation_time = None;
+        self.animation_initialized = false;
+        self.container_boxes.clear();
         self.images.clear();
         self.image_sizes.clear();
+        self.background_images.clear();
+        self.fonts = sol_text::Fonts::discover();
         self.js.rt.listeners.clear();
         self.js.rt.doc = Some(self.doc.clone());
 
@@ -52,8 +59,8 @@ impl Page {
 
         self.collect_sheets();
         self.load_images();
-        self.restyle();
-        self.relayout();
+        self.animation_epoch = std::time::Instant::now();
+        self.refresh_rendering();
 
         self.title = self.doc.borrow().title().unwrap_or_default();
 

@@ -2,6 +2,7 @@
 //! every real browser carries in its UA sheet.
 
 pub const UA_CSS: &str = r#"
+ol, ul { counter-reset: list-item; }
 html, body, div, span, applet, object, iframe, h1, h2, h3, h4, h5, h6, p,
 blockquote, pre, a, abbr, acronym, address, big, cite, code, del, dfn, em,
 img, ins, kbd, q, s, samp, small, strike, strong, sub, sup, tt, var, b, u,
@@ -27,9 +28,9 @@ p { display: block; margin: 1em 0; }
 pre { display: block; font-family: monospace; white-space: pre; margin: 1em 0; }
 blockquote { display: block; margin: 1em 40px; }
 ul, menu, dir { display: block; list-style-type: disc; margin: 1em 0; padding-left: 40px; }
-ol { display: block; list-style-type: decimal; margin: 1em 0; padding-left: 40px; }
+ol { counter-reset: list-item; display: block; list-style-type: decimal; margin: 1em 0; padding-left: 40px; }
 li { display: list-item; }
-ul ul, ol ul { list-style-type: circle; }
+ul ul, ol ul { counter-reset: list-item; list-style-type: circle; }
 ul ul ul, ul ol ul, ol ul ul, ol ol ul { list-style-type: square; }
 a { color: #0000ee; text-decoration: underline; cursor: pointer; }
 a:visited { color: #551a8b; }

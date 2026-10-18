@@ -6,8 +6,15 @@
 //! positioned), approximated by ordered DFS since absolute boxes are
 //! appended last by layout.
 
+mod background;
+mod effects;
 mod graphics;
-pub use graphics::{contains_rounded, css_transform, transformed_rect, Radii};
+mod shadows;
+pub use shadows::Shadow;
+mod stacking;
+pub use graphics::{
+    contains_rounded, contains_rounded_rect, css_transform, transformed_rect, Radii,
+};
 use sol_css::{Style, Value};
 use sol_dom::{Document, NodeId};
 use sol_img::Image;
@@ -21,6 +28,33 @@ pub struct Rgba(pub u8, pub u8, pub u8, pub u8);
 
 #[derive(Clone, Debug)]
 pub enum Prim {
+    Shadow {
+        rect: Rect,
+        radii: Radii,
+        shadow: shadows::Shadow,
+    },
+    TextShadow {
+        x: f32,
+        baseline: f32,
+        face_idx: usize,
+        text: String,
+        shadow: shadows::Shadow,
+    },
+    Background {
+        border: Rect,
+        padding: Rect,
+        content: Rect,
+        radii: Radii,
+        style: Rc<Style>,
+    },
+    PushOpacity(f32),
+    PopOpacity,
+    Hit {
+        node: NodeId,
+        rect: Rect,
+        radii: Radii,
+        enabled: bool,
+    },
     RoundedFill {
         rect: Rect,
         radii: Radii,
@@ -54,6 +88,12 @@ pub enum Prim {
         rect: Rect,
         node: NodeId,
     },
+    FittedImg {
+        rect: Rect,
+        node: NodeId,
+        fit: String,
+        position: Vec<Value>,
+    },
     Border {
         rect: Rect,
         w: sol_layout::Edges,
@@ -79,11 +119,63 @@ pub struct DisplayList {
     pub prims: Vec<Prim>,
 }
 
+impl DisplayList {
+    pub fn hit(&self, x: f32, y: f32) -> Option<NodeId> {
+        let mut transform = Transform::identity();
+        let mut transforms = Vec::new();
+        let mut clips = Vec::new();
+        let mut hit = None;
+        let point = |matrix: Transform| {
+            let mut p = Point::from_xy(x, y);
+            matrix.invert()?.map_point(&mut p);
+            Some(p)
+        };
+        for primitive in &self.prims {
+            match primitive {
+                Prim::PushTransform(matrix) => {
+                    transforms.push(transform);
+                    transform = transform.pre_concat(*matrix);
+                }
+                Prim::PopTransform => {
+                    if let Some(matrix) = transforms.pop() {
+                        transform = matrix;
+                    }
+                }
+                Prim::RoundedClip { rect, radii } => clips.push((transform, *rect, *radii)),
+                Prim::Clip { rect } => clips.push((transform, *rect, [(0.0, 0.0); 4])),
+                Prim::PopClip => {
+                    clips.pop();
+                }
+                Prim::Hit {
+                    node,
+                    rect,
+                    radii,
+                    enabled: true,
+                } if point(transform)
+                    .is_some_and(|p| contains_rounded_rect(*radii, *rect, p.x, p.y))
+                    && clips.iter().all(|(matrix, rect, radii)| {
+                        point(*matrix)
+                            .is_some_and(|p| contains_rounded_rect(*radii, *rect, p.x, p.y))
+                    }) =>
+                {
+                    hit = Some(*node);
+                }
+                _ => {}
+            }
+        }
+        hit
+    }
+}
+
 fn color_of(st: &Style, name: &str) -> Option<Rgba> {
     let v = st.get(name)?.first()?;
     match v {
         Value::Color(r, g, b, a) => Some(Rgba(*r, *g, *b, *a)),
         Value::Ident(s) | Value::Keyword(s) => match s.as_str() {
+            "currentcolor" if name != "color" => st
+                .color("color")
+                .map(|c| Rgba(c[0], c[1], c[2], c[3]))
+                .or(Some(Rgba(0, 0, 0, 255))),
             "transparent" => None,
             _ => None,
         },
@@ -100,78 +192,76 @@ fn is_hidden(st: Option<&Rc<Style>>) -> bool {
 
 fn overflow_clip(st: Option<&Rc<Style>>) -> bool {
     st.as_ref()
-        .and_then(|s| s.ident("overflow-x").or_else(|| s.ident("overflow")))
+        .and_then(|s| {
+            s.ident("overflow-x")
+                .filter(|value| value != "visible")
+                .or_else(|| s.ident("overflow-y").filter(|value| value != "visible"))
+                .or_else(|| s.ident("overflow"))
+        })
         .map(|v| matches!(v.as_str(), "hidden" | "scroll" | "auto"))
         .unwrap_or(false)
 }
 
 /// Build the display list from a laid-out tree.
 pub fn build_dl(doc: &Document, root: &LBox, dl: &mut DisplayList) {
-    // CSS2.1 §14.2: if <html> has no background, the <body> background
-    // propagates to the canvas — which covers the whole viewport, not
-    // just the (content-height) root box. 1e6 is effectively infinite;
-    // fill_rect clips to the canvas bounds.
-    if let Some(c) = canvas_bg(root) {
-        dl.prims.push(Prim::Fill {
-            rect: Rect {
-                x: 0.0,
-                y: 0.0,
-                w: root.rect.w.max(1e6),
-                h: 1e6,
-            },
-            color: c,
+    fn find<'a>(doc: &Document, box_: &'a LBox, tag: &str) -> Option<&'a LBox> {
+        if box_.node.is_some_and(|node| doc.is_tag(node, tag)) {
+            return Some(box_);
+        }
+        box_.kids.iter().find_map(|child| find(doc, child, tag))
+    }
+    let active = |box_: &&LBox| {
+        box_.style.as_ref().is_some_and(|style| {
+            style.color("background-color").is_some_and(|c| c[3] > 0)
+                || style.get("background-image").is_some_and(|values| {
+                    values
+                        .iter()
+                        .any(|v| matches!(v, Value::Url(_) | Value::Func(..)))
+                })
+        })
+    };
+    let source = find(doc, root, "html")
+        .filter(active)
+        .or_else(|| find(doc, root, "body").filter(active));
+    if let Some(source) = source {
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: root.rect.w,
+            h: root
+                .rect
+                .h
+                .max(sol_css::style::viewport::HEIGHT.get() as f32),
+        };
+        dl.prims.push(Prim::Background {
+            border: rect,
+            padding: rect,
+            content: rect,
+            radii: [(0.0, 0.0); 4],
+            style: source.style.as_ref().unwrap().clone(),
         });
     }
-    paint_box(doc, root, dl);
+    stacking::paint(doc, root, dl, source.and_then(|box_| box_.node));
 }
 
-/// Canvas background: first element kid's effective bg — root box wraps html,
-/// whose first element kid is body. Only propagates when root itself is empty.
-fn canvas_bg(root: &LBox) -> Option<Rgba> {
-    let own = root
-        .style
-        .as_ref()
-        .and_then(|s| color_of(s, "background-color"))
-        .filter(|c| c.3 > 0);
-    if own.is_some() {
-        return own;
-    }
-    let mut cur = root;
-    for _ in 0..2 {
-        let k = cur.kids.iter().find(|k| k.node.is_some())?;
-        if let Some(c) = k
-            .style
-            .as_ref()
-            .and_then(|s| color_of(s, "background-color"))
-            .filter(|c| c.3 > 0)
-        {
-            return Some(c);
-        }
-        cur = k;
-    }
-    None
-}
-
-fn paint_box(doc: &Document, b: &LBox, dl: &mut DisplayList) {
+pub(crate) fn paint_single(
+    doc: &Document,
+    b: &LBox,
+    dl: &mut DisplayList,
+    canvas_source: Option<NodeId>,
+) {
     if is_hidden(b.style.as_ref()) {
         return;
     }
     let st = b.style.as_ref();
-    let clip = overflow_clip(st)
-        && matches!(
-            b.kind,
-            Kind::Block | Kind::InlineBlock | Kind::Replaced | Kind::TableCell
-        );
-    let transform = !matches!(
-        b.kind,
-        Kind::Text | Kind::Marker | Kind::Line | Kind::AnonymousBlock | Kind::Inline
-    ) && st
-        .and_then(|s| css_transform(s, b.rect))
-        .map(|matrix| {
-            dl.prims.push(Prim::PushTransform(matrix));
-            true
-        })
-        .unwrap_or(false);
+    if let Some(node) = b.node {
+        dl.prims.push(Prim::Hit {
+            node,
+            rect: b.rect,
+            radii: st.map(|s| graphics::radii(s, b.rect)).unwrap_or_default(),
+            enabled: st.is_none_or(|s| s.ident("pointer-events").as_deref() != Some("none")),
+        });
+    }
     let radii = st
         .map(|s| graphics::radii(s, b.rect))
         .unwrap_or([(0.0, 0.0); 4]);
@@ -180,24 +270,26 @@ fn paint_box(doc: &Document, b: &LBox, dl: &mut DisplayList) {
         Kind::Text | Kind::Line | Kind::AnonymousBlock => {}
         _ => {
             if let Some(s) = st {
-                if let Some(c) = color_of(s, "background-color") {
-                    if c.3 > 0 {
-                        dl.prims.push(Prim::RoundedFill {
-                            rect: b.rect,
-                            radii,
-                            color: c,
-                        });
-                    }
+                shadows::boxes(s, b.rect, radii, false, dl);
+                if b.node != canvas_source || b.node.is_none() {
+                    dl.prims.push(Prim::Background {
+                        border: b.rect,
+                        padding: b.padding_rect(),
+                        content: b.content_rect(),
+                        radii,
+                        style: s.clone(),
+                    });
                 }
+                shadows::boxes(
+                    s,
+                    b.padding_rect(),
+                    graphics::inset_radii(radii, b.border),
+                    true,
+                    dl,
+                );
                 push_border(b, s, dl);
             }
         }
-    }
-    if clip {
-        dl.prims.push(Prim::RoundedClip {
-            rect: b.padding_rect(),
-            radii: graphics::inset_radii(radii, b.border),
-        });
     }
     let image_clip = b.kind == Kind::Replaced && radii.iter().any(|&(x, y)| x > 0.0 || y > 0.0);
     if image_clip {
@@ -214,6 +306,9 @@ fn paint_box(doc: &Document, b: &LBox, dl: &mut DisplayList) {
                     .and_then(|s| color_of(s, "color"))
                     .unwrap_or(Rgba(0, 0, 0, 255));
                 let baseline = b.rect.y + b.baseline;
+                if let Some(style) = st {
+                    shadows::text(style, b.rect.x, baseline, tr.face_idx, &tr.text, dl);
+                }
                 dl.prims.push(Prim::Text {
                     x: b.rect.x,
                     baseline,
@@ -261,10 +356,23 @@ fn paint_box(doc: &Document, b: &LBox, dl: &mut DisplayList) {
             if let Some(n) = b.node {
                 let tag = doc.tag(n).to_string();
                 if tag == "img" {
-                    dl.prims.push(Prim::Img {
-                        rect: b.content_rect(),
-                        node: n,
-                    });
+                    if let Some(style) = st.filter(|style| {
+                        style.get("object-fit").is_some() || style.get("object-position").is_some()
+                    }) {
+                        dl.prims.push(Prim::FittedImg {
+                            rect: b.content_rect(),
+                            node: n,
+                            fit: style.ident("object-fit").unwrap_or_else(|| "fill".into()),
+                            position: style.get("object-position").cloned().unwrap_or_else(|| {
+                                vec![Value::Percentage(50.0), Value::Percentage(50.0)]
+                            }),
+                        });
+                    } else {
+                        dl.prims.push(Prim::Img {
+                            rect: b.content_rect(),
+                            node: n,
+                        });
+                    }
                 } else {
                     paint_form(doc, n, b, &tag, dl);
                 }
@@ -275,15 +383,57 @@ fn paint_box(doc: &Document, b: &LBox, dl: &mut DisplayList) {
     if image_clip {
         dl.prims.push(Prim::PopClip);
     }
-    for k in &b.kids {
-        paint_box(doc, k, dl);
+}
+
+pub(crate) fn paint_outline(box_: &LBox, dl: &mut DisplayList) {
+    if is_hidden(box_.style.as_ref())
+        || matches!(
+            box_.kind,
+            Kind::Text | Kind::Line | Kind::AnonymousBlock | Kind::Marker
+        )
+    {
+        return;
     }
-    if clip {
-        dl.prims.push(Prim::PopClip);
-    }
-    if transform {
-        dl.prims.push(Prim::PopTransform);
-    }
+    let Some(style) = &box_.style else { return };
+    let kind = style
+        .ident("outline-style")
+        .unwrap_or_else(|| "none".into());
+    let kind = match kind.as_str() {
+        "solid" | "auto" => 0,
+        "dashed" => 1,
+        "dotted" => 2,
+        "double" => 3,
+        _ => return,
+    };
+    let width = style
+        .length_px("outline-width", 16.0, box_.rect.w as f64)
+        .unwrap_or(3.0)
+        .max(0.0) as f32;
+    let offset = style.length_px("outline-offset", 16.0, 0.0).unwrap_or(0.0) as f32;
+    let distance = width + offset;
+    let rect = Rect {
+        x: box_.rect.x - distance,
+        y: box_.rect.y - distance,
+        w: box_.rect.w + 2.0 * distance,
+        h: box_.rect.h + 2.0 * distance,
+    };
+    let radii = graphics::radii(style, box_.rect)
+        .map(|(x, y)| ((x + distance).max(0.0), (y + distance).max(0.0)));
+    let color = color_of(style, "outline-color")
+        .or_else(|| color_of(style, "color"))
+        .unwrap_or(Rgba(0, 0, 0, 255));
+    dl.prims.push(Prim::RoundedBorder {
+        rect,
+        radii,
+        w: sol_layout::Edges {
+            top: width,
+            right: width,
+            bottom: width,
+            left: width,
+        },
+        colors: [color; 4],
+        styles: [kind; 4],
+    });
 }
 
 fn push_border(b: &LBox, s: &Rc<Style>, dl: &mut DisplayList) {
@@ -481,6 +631,8 @@ pub struct Canvas {
     masks: Vec<graphics::DeviceMask>,
     transform: tiny_skia::Transform,
     transform_stack: Vec<tiny_skia::Transform>,
+    layers: Vec<effects::Layer>,
+    suppress: bool,
 }
 
 impl Canvas {
@@ -519,6 +671,8 @@ impl Canvas {
             masks: Vec::new(),
             transform: tiny_skia::Transform::identity(),
             transform_stack: Vec::new(),
+            layers: Vec::new(),
+            suppress: false,
         })
     }
 
@@ -543,6 +697,9 @@ impl Canvas {
 
     #[inline]
     fn blend(&mut self, x: i32, y: i32, c: Rgba, cov: u8) {
+        if self.suppress {
+            return;
+        }
         if (x as f32 + 1.0) <= self.clip.x
             || (y as f32 + 1.0) <= self.clip.y
             || x as f32 >= self.clip.right()
@@ -885,8 +1042,59 @@ pub fn render(
     fallback_face: &sol_text::Face,
     canvas: &mut Canvas,
 ) {
+    render_with_resources(dl, faces, images, &HashMap::new(), fallback_face, canvas);
+}
+
+pub fn render_with_resources(
+    dl: &DisplayList,
+    faces: &FaceSet,
+    images: &HashMap<NodeId, Rc<Image>>,
+    backgrounds: &HashMap<String, Rc<Image>>,
+    fallback_face: &sol_text::Face,
+    canvas: &mut Canvas,
+) {
     for p in &dl.prims {
         match p {
+            Prim::Shadow {
+                rect,
+                radii,
+                shadow,
+            } => canvas.shadow(*rect, *radii, shadow),
+            Prim::TextShadow {
+                x,
+                baseline,
+                face_idx,
+                text,
+                shadow,
+            } => canvas.text_shadow(
+                if *face_idx == usize::MAX {
+                    fallback_face
+                } else {
+                    faces.get(*face_idx)
+                },
+                *x,
+                *baseline,
+                text,
+                shadow,
+            ),
+            Prim::Background {
+                border,
+                padding,
+                content,
+                radii,
+                style,
+            } => background::paint(
+                canvas,
+                *border,
+                *padding,
+                *content,
+                *radii,
+                style,
+                backgrounds,
+            ),
+            Prim::PushOpacity(opacity) => canvas.push_opacity(*opacity),
+            Prim::PopOpacity => canvas.pop_opacity(),
+            Prim::Hit { .. } => {}
             Prim::RoundedFill { rect, radii, color } => {
                 canvas.fill_rounded_rect(*rect, *radii, *color)
             }
@@ -916,6 +1124,40 @@ pub fn render(
                     faces.get(*face_idx)
                 };
                 canvas.draw_text(face, *x, *baseline, text, *color);
+            }
+            Prim::FittedImg {
+                rect,
+                node,
+                fit,
+                position,
+            } => {
+                if let Some(image) = images.get(node) {
+                    let nw = image.w as f32;
+                    let nh = image.h as f32;
+                    let factor = match fit.as_str() {
+                        "contain" => (rect.w / nw).min(rect.h / nh),
+                        "cover" => (rect.w / nw).max(rect.h / nh),
+                        "scale-down" => (rect.w / nw).min(rect.h / nh).min(1.0),
+                        _ => 1.0,
+                    };
+                    let (w, h) = if fit == "fill" {
+                        (rect.w, rect.h)
+                    } else {
+                        (nw * factor, nh * factor)
+                    };
+                    let (x, y) = background::position(position, rect.w - w, rect.h - h);
+                    canvas.push_clip(*rect);
+                    canvas.blit(
+                        image,
+                        Rect {
+                            x: rect.x + x,
+                            y: rect.y + y,
+                            w,
+                            h,
+                        },
+                    );
+                    canvas.pop_clip();
+                }
             }
             Prim::Img { rect, node } => {
                 if let Some(img) = images.get(node) {

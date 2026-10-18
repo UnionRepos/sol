@@ -4,13 +4,22 @@
 //! [`parse_stylesheet`] produces the rendering adapter; syntax preservation and
 //! renderer feature support are deliberately separate contracts.
 
+pub mod animations;
+mod background;
+mod colors;
 pub mod conditions;
+pub mod containers;
+mod layers;
 mod matching;
 mod math;
+mod namespaces;
+mod nesting;
 pub mod parser;
+pub mod properties;
 pub mod selector;
 pub mod style;
 pub mod syntax;
+mod transitions;
 pub mod ua;
 pub mod values;
 mod variables;

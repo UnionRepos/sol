@@ -337,3 +337,83 @@ fn rtl_words_use_visual_order_and_shaped_widths() {
         assert!((run.rect.w - face.shape(&text.text).width).abs() < 0.01);
     }
 }
+
+#[test]
+fn grid_tracks_spans_gaps_and_stretch_produce_two_dimensional_layout() {
+    let (doc,out,_)=lay("<main id=g><div id=a></div><div id=b></div><div id=c></div></main>","body{margin:0} main{display:grid;width:310px;grid-template-columns:100px 1fr;grid-template-rows:30px 40px;gap:10px} #c{grid-column:1 / span 2}",800.0,600.0);
+    let rect = |id: &str| {
+        let mut boxes = Vec::new();
+        out.root.walk(&mut boxes);
+        boxes
+            .iter()
+            .find(|b| b.node == doc.get_element_by_id(id))
+            .unwrap()
+            .rect
+    };
+    let a = rect("a");
+    let b = rect("b");
+    let c = rect("c");
+    assert_eq!((a.x, a.y, a.w, a.h), (0.0, 0.0, 100.0, 30.0));
+    assert_eq!((b.x, b.y, b.w, b.h), (110.0, 0.0, 200.0, 30.0));
+    assert_eq!((c.x, c.y, c.w, c.h), (0.0, 40.0, 310.0, 40.0));
+}
+
+#[test]
+fn grid_repeat_minmax_and_explicit_cells_reserve_space_before_auto_placement() {
+    let (doc,out,_)=lay("<main><div id=a></div><div id=b></div><div id=c></div></main>","body{margin:0} main{display:grid;width:210px;grid-template-columns:repeat(2,minmax(20px,1fr));grid-auto-rows:25px;gap:10px} #c{grid-column:1;grid-row:1}",800.0,600.0);
+    let mut boxes = Vec::new();
+    out.root.walk(&mut boxes);
+    let rect = |id: &str| {
+        boxes
+            .iter()
+            .find(|b| b.node == doc.get_element_by_id(id))
+            .unwrap()
+            .rect
+    };
+    assert_eq!((rect("a").x, rect("a").w), (110.0, 100.0));
+    assert_eq!((rect("b").x, rect("b").y), (0.0, 35.0));
+    assert_eq!((rect("c").x, rect("c").y), (0.0, 0.0));
+}
+
+#[test]
+fn named_grid_areas_span_cells_and_preserve_item_source_order() {
+    let (doc,out,_)=lay("<main><div id=header></div><div id=left></div><div id=right></div></main>","body{margin:0} main{display:grid;width:200px;grid-template-columns:80px 120px;grid-template-rows:20px 40px;grid-template-areas:'head head' 'left right'} #header{grid-area:head} #left{grid-area:left} #right{grid-area:right}",800.0,600.0);
+    let mut boxes = Vec::new();
+    out.root.walk(&mut boxes);
+    let rect = |id: &str| {
+        boxes
+            .iter()
+            .find(|b| b.node == doc.get_element_by_id(id))
+            .unwrap()
+            .rect
+    };
+    assert_eq!(
+        (rect("header").x, rect("header").w, rect("header").h),
+        (0.0, 200.0, 20.0)
+    );
+    assert_eq!((rect("right").x, rect("right").y), (80.0, 20.0));
+}
+
+#[test]
+fn inline_block_placement_translates_its_text_descendants_with_the_box() {
+    let (doc, out, _) = lay(
+        "<div><span id=inline>label</span></div>",
+        "body{margin:0} div{padding:40px} span{display:inline-block;width:100px;padding:10px}",
+        800.0,
+        600.0,
+    );
+    let mut boxes = Vec::new();
+    out.root.walk(&mut boxes);
+    let inline = boxes
+        .iter()
+        .find(|b| b.node == doc.get_element_by_id("inline") && b.kind == Kind::InlineBlock)
+        .unwrap();
+    let mut children = Vec::new();
+    inline.walk(&mut children);
+    let text = children
+        .into_iter()
+        .find(|box_| box_.text.is_some())
+        .unwrap();
+    assert!(text.rect.x >= inline.rect.x + 10.0);
+    assert!(text.rect.y >= inline.rect.y + 10.0);
+}

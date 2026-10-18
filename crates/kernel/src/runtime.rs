@@ -59,9 +59,9 @@ impl Page {
         // Draining them first preserves that ordering at the refresh boundary.
         self.js.drain_microtasks();
         self.pump_timers(4);
-        if self.dirty || self.doc.borrow_mut().take_dirty() {
-            self.restyle();
-            self.relayout();
+        if self.dirty || self.doc.borrow_mut().take_dirty() || self.animation_timeline.active {
+            self.collect_sheets();
+            self.refresh_rendering();
             self.dirty = false;
         }
         self.apply_nav();

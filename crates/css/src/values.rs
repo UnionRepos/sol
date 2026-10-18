@@ -97,13 +97,31 @@ pub(crate) fn from_components(values: &[crate::syntax::ComponentValue]) -> Vec<V
                 if matches!(name.as_str(), "calc" | "min" | "max" | "clamp") {
                     return Some(Value::Math(name, value.clone()));
                 }
-                let args = from_components(value);
+                let args = if matches!(name.as_str(), "counter" | "counters") {
+                    value
+                        .iter()
+                        .filter(|value| !value.is_whitespace())
+                        .flat_map(|value| {
+                            if let Some(T::Ident(name)) = value.kind() {
+                                vec![Value::Ident(name.clone())]
+                            } else {
+                                from_components(std::slice::from_ref(value))
+                            }
+                        })
+                        .collect()
+                } else {
+                    from_components(value)
+                };
                 if name == "url" {
                     if let [Value::Str(url)] = args.as_slice() {
                         return Some(Value::Url(url.clone()));
                     }
                 }
-                Some(parse_color_function(&name, &args).unwrap_or(Value::Func(name, args)))
+                Some(
+                    parse_color_function(&name, &args)
+                        .or_else(|| crate::colors::parse(&name, &args))
+                        .unwrap_or(Value::Func(name, args)),
+                )
             }
             C::Block { opening, value } => Some(Value::Block(*opening, from_components(value))),
         })

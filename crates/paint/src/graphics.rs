@@ -73,7 +73,7 @@ pub fn inset_radii(radii: Radii, edges: sol_layout::Edges) -> Radii {
     ]
 }
 
-fn rounded_path(rect: Rect, radii: Radii) -> Option<Path> {
+pub(super) fn rounded_path(rect: Rect, radii: Radii) -> Option<Path> {
     tiny_skia::Rect::from_xywh(rect.x, rect.y, rect.w, rect.h)?;
     let r = normalize(rect, radii);
     let k = 0.5522848;
@@ -522,10 +522,13 @@ pub fn transformed_rect(rect: Rect, transform: Transform) -> Rect {
 }
 
 pub fn contains_rounded(style: &Style, rect: Rect, x: f32, y: f32) -> bool {
+    contains_rounded_rect(radii(style, rect), rect, x, y)
+}
+
+pub fn contains_rounded_rect(radii: Radii, rect: Rect, x: f32, y: f32) -> bool {
     if !rect.contains(x, y) {
         return false;
     }
-    let radii = radii(style, rect);
     let centers = [
         (rect.x + radii[0].0, rect.y + radii[0].1),
         (rect.right() - radii[1].0, rect.y + radii[1].1),

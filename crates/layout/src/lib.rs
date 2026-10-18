@@ -7,6 +7,8 @@
 
 pub mod block;
 pub mod flex;
+mod generated;
+pub mod grid;
 pub mod table;
 pub mod tree;
 
@@ -144,12 +146,21 @@ pub fn style_of<'a>(input: &'a LayoutInput, n: NodeId) -> Option<&'a Rc<Style>> 
 
 /// Full layout: build the box tree then reflow into absolute rects.
 pub fn layout(doc: &sol_dom::Document, input: &LayoutInput) -> Out {
+    sol_css::style::viewport::WIDTH.set(input.viewport_w as f64);
+    sol_css::style::viewport::HEIGHT.set(input.viewport_h as f64);
+    sol_css::style::viewport::ROOT_FONT_SIZE.set(
+        doc.document_element()
+            .and_then(|node| input.styles.get(&node))
+            .and_then(|style| style.length_px("font-size", 16.0, 16.0))
+            .unwrap_or(16.0),
+    );
     let mut faces = FaceSet { faces: Vec::new() };
     let mut root = {
         let mut ctx = tree::Ctx {
             doc,
             input,
             faces: &mut faces,
+            counters: crate::generated::Counters::default(),
         };
         let mut r = tree::build(&mut ctx);
         block::layout_document(&mut ctx, &mut r, input.viewport_w, input.viewport_h);

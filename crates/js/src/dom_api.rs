@@ -894,55 +894,85 @@ fn cl_contains(i: &mut I, this: V, args: &[V]) -> Res<V> {
 
 // ---------- style proxy ----------
 
-fn style_get(node: NodeId, d: &sol_dom::Document, name: &str) -> String {
-    let kebab = camel_to_kebab(name);
-    d.attr(node, "style")
-        .map(|s| {
-            s.split(';')
-                .filter_map(|d2| {
-                    let mut it = d2.splitn(2, ':');
-                    Some((
-                        it.next()?.trim().to_ascii_lowercase(),
-                        it.next().unwrap_or("").trim().to_string(),
-                    ))
-                })
-                .find(|(k, _)| *k == kebab)
-                .map(|(_, v)| v)
-                .unwrap_or_default()
+fn inline_declarations(node: NodeId, doc: &sol_dom::Document) -> Vec<sol_css::syntax::Declaration> {
+    sol_css::syntax::parse_block_contents(doc.attr(node, "style").unwrap_or(""))
+        .items
+        .into_iter()
+        .filter_map(|item| {
+            if let sol_css::syntax::BlockItem::Declaration(decl) = item {
+                Some(decl)
+            } else {
+                None
+            }
         })
+        .collect()
+}
+fn style_declaration(
+    node: NodeId,
+    doc: &sol_dom::Document,
+    name: &str,
+) -> Option<sol_css::syntax::Declaration> {
+    let name = camel_to_kebab(name);
+    inline_declarations(node, doc)
+        .into_iter()
+        .filter(|decl| decl.name == name)
+        .max_by_key(|decl| decl.important)
+}
+fn style_get(node: NodeId, doc: &sol_dom::Document, name: &str) -> String {
+    style_declaration(node, doc, name)
+        .map(|decl| sol_css::syntax::serialize(&decl.value).replace("/**/ /**/", " "))
         .unwrap_or_default()
 }
-
-fn style_set(node: NodeId, d: &mut sol_dom::Document, name: &str, v: &str) {
-    let kebab = camel_to_kebab(name);
-    let cur = d.attr(node, "style").unwrap_or("").to_string();
-    let mut decls: Vec<(String, String)> = cur
-        .split(';')
-        .filter_map(|d2| {
-            let mut it = d2.splitn(2, ':');
-            let k = it.next()?.trim().to_ascii_lowercase();
-            if k.is_empty() {
-                return None;
-            }
-            Some((k, it.next().unwrap_or("").trim().to_string()))
-        })
-        .collect();
-    if v.is_empty() {
-        decls.retain(|(k, _)| *k != kebab);
-    } else if let Some(e) = decls.iter_mut().find(|(k, _)| *k == kebab) {
-        e.1 = v.to_string();
+fn style_set(node: NodeId, doc: &mut sol_dom::Document, name: &str, value: &str) {
+    style_set_priority(node, doc, name, value, false);
+}
+fn style_set_priority(
+    node: NodeId,
+    doc: &mut sol_dom::Document,
+    name: &str,
+    value: &str,
+    important: bool,
+) {
+    let name = camel_to_kebab(name);
+    let declaration = if value.is_empty() {
+        None
     } else {
-        decls.push((kebab, v.to_string()));
+        let Ok(mut declaration) = sol_css::syntax::parse_declaration(&format!(
+            "{}:{value}",
+            sol_css::syntax::escape_ident(&name)
+        )) else {
+            return;
+        };
+        if declaration.important {
+            return;
+        }
+        declaration.important = important;
+        Some(declaration)
+    };
+    let mut declarations = inline_declarations(node, doc);
+    declarations.retain(|decl| decl.name != name);
+    if let Some(declaration) = declaration {
+        declarations.push(declaration);
     }
-    let s = decls
+    let source = declarations
         .iter()
-        .map(|(k, v)| format!("{k}: {v}"))
+        .map(|decl| {
+            format!(
+                "{}:{}{}",
+                sol_css::syntax::escape_ident(&decl.name),
+                sol_css::syntax::serialize(&decl.value),
+                if decl.important { " !important" } else { "" }
+            )
+        })
         .collect::<Vec<_>>()
-        .join("; ");
-    d.set_attribute(node, "style", &s);
+        .join(";");
+    doc.set_attribute(node, "style", &source);
 }
 
 fn camel_to_kebab(s: &str) -> String {
+    if s.starts_with("--") {
+        return s.to_string();
+    }
     let mut out = String::new();
     for c in s.chars() {
         if c.is_ascii_uppercase() {
@@ -959,15 +989,35 @@ fn camel_to_kebab(s: &str) -> String {
 }
 
 fn st_setprop(i: &mut I, this: V, args: &[V]) -> Res<V> {
-    let Some(n) = this_node(i, &this) else {
+    let Some(node) = this_node(i, &this) else {
         return Ok(V::Undef);
     };
     let name = arg(args, 0).to_str(i.rt);
-    let v = arg(args, 1).to_str(i.rt);
-    if let Some(d) = doc_of(i.rt) {
-        style_set(n, &mut d.borrow_mut(), &name, &v);
+    let value = arg(args, 1).to_str(i.rt);
+    let priority = args.get(2).map(|v| v.to_str(i.rt)).unwrap_or_default();
+    if !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
+        return Ok(V::Undef);
+    }
+    if let Some(doc) = doc_of(i.rt) {
+        style_set_priority(
+            node,
+            &mut doc.borrow_mut(),
+            &name,
+            &value,
+            !priority.is_empty(),
+        );
     }
     Ok(V::Undef)
+}
+fn st_getpriority(i: &mut I, this: V, args: &[V]) -> Res<V> {
+    let Some(node) = this_node(i, &this) else {
+        return Ok(V::s(""));
+    };
+    let name = arg(args, 0).to_str(i.rt);
+    let priority = doc_of(i.rt)
+        .and_then(|doc| style_declaration(node, &doc.borrow(), &name))
+        .is_some_and(|decl| decl.important);
+    Ok(V::s(if priority { "important" } else { "" }))
 }
 fn st_getprop(i: &mut I, this: V, args: &[V]) -> Res<V> {
     let Some(n) = this_node(i, &this) else {
@@ -981,7 +1031,18 @@ fn st_getprop(i: &mut I, this: V, args: &[V]) -> Res<V> {
     Ok(V::s(v))
 }
 fn st_rmprop(i: &mut I, this: V, args: &[V]) -> Res<V> {
-    st_setprop(i, this, args)
+    let Some(node) = this_node(i, &this) else {
+        return Ok(V::s(""));
+    };
+    let name = arg(args, 0).to_str(i.rt);
+    let value = if let Some(doc) = doc_of(i.rt) {
+        let value = style_get(node, &doc.borrow(), &name);
+        style_set(node, &mut doc.borrow_mut(), &name, "");
+        value
+    } else {
+        String::new()
+    };
+    Ok(V::s(value))
 }
 
 // ---------- document methods ----------
@@ -1147,7 +1208,11 @@ pub fn get_prop(i: &mut I, r: usize, name: &str) -> Res<Option<V>> {
         ObjKind::StyleObj { node } => {
             let n = *node;
             return Ok(match name {
-                "setProperty" | "getPropertyValue" | "removeProperty" | "cssText" => None,
+                "setProperty"
+                | "getPropertyValue"
+                | "getPropertyPriority"
+                | "removeProperty"
+                | "cssText" => None,
                 _ => {
                     let Some(d) = doc_of(i.rt) else {
                         return Ok(None);
@@ -1374,6 +1439,7 @@ fn element_prop(i: &mut I, n: NodeId, name: &str) -> Res<Option<V>> {
             let st = V::Obj(o);
             put_fn(i.rt, o, "setProperty", st_setprop);
             put_fn(i.rt, o, "getPropertyValue", st_getprop);
+            put_fn(i.rt, o, "getPropertyPriority", st_getpriority);
             put_fn(i.rt, o, "removeProperty", st_rmprop);
             i.rt.set(
                 o,

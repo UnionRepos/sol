@@ -93,14 +93,15 @@ The [CSS guide](css.md) distinguishes that API from the renderer, which includes
 selectors, cascade/inheritance, custom properties, length math, media/supports, common box properties,
 rounded corners, and 2D transforms. Layout supports block and inline formatting,
 floats, flex, tables, list markers, replaced elements, and positioning. Grid is
-not implemented; recognized grid display values degrade to simpler display types.
+implemented with the track/placement limits in the [rendering guide](rendering.md).
 Transform and border behavior remain approximations in some cases, including
 mixed-style rounded borders and full stacking-context behavior.
 
-Dirty updates rebuild the complete style/layout snapshot. Dynamic additions of
-image or stylesheet elements do not invoke a resource-discovery pass during
-`settle`. `<base href>` data is not used by `Page::resolve`. Standalone image
-documents are rejected even when the format itself can be decoded.
+Dirty updates rebuild the complete style/layout snapshot. Changed stylesheet
+sources and newly referenced CSS backgrounds are discovered during refresh.
+Dynamic `<img>` discovery remains separate. See [CSS rendering](rendering.md)
+for the implemented grid, generated-content, cascade, paint, and timeline
+behavior, budgets, and browser-conformance limits.
 
 ## JavaScript and events
 

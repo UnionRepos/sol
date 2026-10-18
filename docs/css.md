@@ -22,7 +22,7 @@ conformance run.
 | `syntax::parse_rule` | Require one rule without trailing non-whitespace content | `Result<syntax::Rule, Vec<ParseError>>` |
 | `syntax::parse_declaration` | Parse one syntactic declaration | Name, raw component values, `important` |
 | `syntax::parse_block_contents` | Inspect mixed declarations, nested rules, and at-rules in source order | Ordered `BlockItem`s and errors |
-| `parse_stylesheet` | Build styles for the existing renderer | Typed style/media/supports/font-face/import rules; other at-rules preserved as CSS |
+| `parse_stylesheet` | Build styles for the renderer | Typed style, grouping, layer, container, keyframe, registration, font-face, and import rules; other at-rules preserved |
 | `parse_decls` | Parse inline declarations for the style engine | Typed declarations, with invalid declarations skipped |
 | `parse_selector`, `parse_selector_list` | Parse a selector or strict selector list | Subject-first selectors with specificity |
 | `parse_value` | Interpret common colors, dimensions, functions, and values | Typed values; unknown dimensions/functions remain represented |
@@ -91,7 +91,9 @@ child, adjacent-sibling, and following-sibling selectors. Attribute operators
 include `=`, `~=`, `|=`, `^=`, `$=`, and `*=`, with explicit ASCII `i` and `s` flags.
 Empty substring operands do not match. Escapes are decoded before DOM comparison.
 Namespace-qualified selector syntax is represented; stylesheet `@namespace`
-prefix resolution is not implemented, so unresolved prefixes do not match.
+prefixes resolve from a stylesheet's `@namespace` declarations; unresolved
+prefixes invalidate the affected strict rule. See [rendering](rendering.md) for
+resource-loading and namespace boundaries.
 
 Structural selectors include child/type position, reverse positions, `An+B`,
 and `:nth-child(... of selector-list)` / `:nth-last-child(... of selector-list)`.
@@ -104,8 +106,8 @@ selectors add the pseudo-class specificity to their most specific filter.
 `:scope`, `:lang()`, `:dir()`, link, form-state, and interactive state selectors
 have implementations. Language and form matching are simplified DOM-based
 approximations; direction uses inherited `dir`, rather than full Unicode
-content-based directionality. Pseudo-elements are parsed but do not create
-rendered pseudo boxes. Unknown pseudo-classes invalidate strict selector lists.
+content-based directionality. Generated `::before`, `::after`, and marker text feed layout; other
+pseudo-elements retain the rendering limitations in the [rendering guide](rendering.md). Unknown pseudo-classes invalidate strict selector lists.
 
 `style::matches_scoped` accepts an explicit scope node. JavaScript `matches()`
 uses its element as scope; element queries use their query root. Queries parse a
@@ -126,8 +128,9 @@ Shorthands containing variables expand after substitution, preserving declaratio
 priority relative to longhands. Invalid computed substitutions use `unset`
 behavior rather than resurrecting a lower-priority declaration. Validation covers
 common interpreted properties; the engine does not implement every CSS module's
-property grammar. `revert`/`revert-layer` do not implement complete origin/layer
-rollback semantics, and registered `@property` behavior is not implemented.
+property grammar. Layer rollback and common `@property` syntax registrations are
+implemented; the [rendering guide](rendering.md) lists their supported grammar and
+remaining cascade/registration limits.
 
 Length evaluation handles `calc()`, `min()`, `max()`, and `clamp()`, including
 parentheses, arithmetic precedence, percentages, and supported absolute/font/
@@ -139,10 +142,10 @@ CSS typed arithmetic system. Viewport units use the viewport, independently of
 the containing block's percentage base.
 
 Colors include named colors, 3/4/6/8-digit hex, legacy comma and modern space/slash
-`rgb()`/`rgba()` and `hsl()`/`hsla()`, and `hwb()`. Hue angles and alpha percentages
-are supported. Unknown or unsupported functions such as `color()`, `lab()`,
-`oklch()`, gradients, and `color-mix()` remain function values; this does not
-make them renderable colors or images.
+RGB/HSL/HWB, Lab/LCH, OKLab/OKLCH, supported RGB/XYZ `color()` profiles, and
+`color-mix()` in selected spaces. Gradients remain structured functions until
+painting. The [rendering guide](rendering.md) explains conversion, compositing,
+interpolation, and gamut limits.
 
 ## Conditional rules and rendering boundaries
 
@@ -158,18 +161,16 @@ light color scheme, no reduced-motion preference, hover capability, and a fine
 pointer. These are engine defaults, not host-device detection. `viewport::MEDIUM`
 selects screen/print behavior. Unknown features evaluate false.
 
-`@supports` checks known property/value forms and `selector(...)`. It reports the
-engine's implemented feature subset; for example, `display:grid` is unsupported.
-Its property checks are not a complete standards-wide validation database.
+`@supports` checks known property/value forms and `selector(...)`, including
+implemented grid display values. Its property checks are not a complete
+standards-wide validation database.
 
-`@font-face` declarations and `@import` URLs are parsed; import loading and
-web-font activation are not implemented by this parser. Arbitrary at-rules,
-including `@layer`, `@container`, `@keyframes`, `@page`, `@property`, and namespace
-rules, remain available in the generic AST and as preserved `Rule::Other` text
-in the adapter. Their layout/cascade semantics are not activated. Nested style
-rules remain available through the generic block API; the renderer does not
-expand CSS nesting. Grid, animations, generated pseudo content, and complete
-cascade layers require separate rendering work.
+The rendering adapter activates nested rules, cascade layers, size-container
+queries, keyframes, and registered custom properties. Kernel loading expands
+imports and activates supported font faces and background resources. Unknown
+at-rules, including paged-media rules without an implemented renderer, remain
+preserved. See [CSS rendering](rendering.md) for the concrete supported behavior,
+API examples, budgets, and remaining browser-conformance gaps.
 
 ## Budgets and verification
 

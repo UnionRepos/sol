@@ -133,7 +133,7 @@ should be followed by explicit style/layout refresh when necessary.
 
 Stylesheet fetches can overlap, but cascade order must follow document order.
 The kernel records inline sources and linked-source positions before fetching,
-then assembles CSS by those positions. Repeated links can share a network fetch
+then parses each top-level sheet in those positions, preserving its namespace scope. Repeated links can share a network fetch
 without losing their separate positions relative to other sheets. A combined
 16 MiB author-CSS budget limits retained source text.
 
@@ -143,10 +143,10 @@ are available to layout before scripts run. Images are processed in chunks of
 32 unique jobs so the page does not retain every encoded response at once.
 The decoded page budget charges shared pixel storage once per unique image.
 
-Image and stylesheet discovery occurs during loading. A later script that adds
-an `<img>` or stylesheet does not cause `settle` to repeat resource discovery;
-it only triggers the style/layout refresh path. A dynamic resource loader would
-need an explicit owner and lifecycle beyond dirty-flag handling.
+Image discovery occurs during loading. Stylesheet-source fingerprints are checked
+on dirty refresh; changed CSS can fetch imports, fonts, and background images.
+Dynamic `<img>` discovery remains outside that refresh path. CSS resource policy
+and its bounds are described in [CSS rendering](rendering.md).
 
 ## Request policy versus transport
 
@@ -266,3 +266,16 @@ expressions. Keeping whitespace and token boundaries until those grammars run
 prevents string delimiters, escapes, and adjacent substitutions from silently
 changing a declaration's meaning. `style` coordinates cascade, inheritance, and
 shorthand expansion; layout consumes computed values through the existing API.
+
+## CSS rendering and event time
+
+The [rendering guide](rendering.md) documents the end-to-end CSS path. `Page` owns
+the animation timeline, stylesheet fingerprint, background images, and previous
+container sizes. A refresh samples one time while iterating style/layout for
+container feedback. Fixed-time sampling uses `Page::sample_animations`.
+
+Generated content remains in the box tree rather than the DOM. Absolute boxes
+remain under their layout parent so compositing and clipping retain ownership.
+The paint planner flattens non-stacking ancestors within a context and preserves
+atomic transform/opacity contexts. Display-list hit candidates replay the same
+transform, clip, and z-order state used for pixels.

@@ -198,6 +198,16 @@ impl Condition {
             Self::Selector(v) => selector(v),
         }
     }
+    pub fn matches_size(&self, width: f64, height: f64) -> bool {
+        self.valid()
+            && self.evaluate(
+                &|values| media_feature_at(values, Some((width, height))),
+                &|_| false,
+            )
+    }
+    pub fn needs_block_size(&self) -> bool {
+        match self{Self::Feature(values)=>values.iter().any(|value|matches!(value.kind(),Some(T::Ident(name)) if name.to_ascii_lowercase().contains("height")||name.to_ascii_lowercase().contains("aspect-ratio")||name.eq_ignore_ascii_case("orientation"))),Self::Not(value)=>value.needs_block_size(),Self::And(values)|Self::Or(values)=>values.iter().any(Self::needs_block_size),_=>false}
+    }
     pub fn supports(&self) -> bool {
         self.valid()
             && self.evaluate(
@@ -241,7 +251,7 @@ fn supports_declaration(decl: &crate::parser::Decl) -> bool {
     let values = decl.value.as_slice();
     match decl.name.as_str() {
         "display" => matches!(values, [Value::Ident(name)] if matches!(name.as_str(),
-            "none" | "block" | "inline" | "inline-block" | "flex" | "inline-flex" |
+            "none" | "block" | "inline" | "inline-block" | "flex" | "inline-flex" | "grid" | "inline-grid" |
             "table" | "inline-table" | "table-row" | "table-cell" | "contents" | "list-item")),
         "position" => {
             matches!(values, [Value::Ident(name)] if matches!(name.as_str(), "static" | "relative" | "absolute" | "fixed"))
@@ -313,9 +323,13 @@ pub fn media_matches(queries: &[crate::parser::MediaQuery]) -> bool {
     })
 }
 
-fn actual(name: &str) -> Option<f64> {
-    let w = crate::style::viewport::WIDTH.get();
-    let h = crate::style::viewport::HEIGHT.get();
+fn actual_at(name: &str, size: Option<(f64, f64)>) -> Option<f64> {
+    let (w, h) = size.unwrap_or_else(|| {
+        (
+            crate::style::viewport::WIDTH.get(),
+            crate::style::viewport::HEIGHT.get(),
+        )
+    });
     match name {
         "width" | "device-width" => Some(w),
         "height" | "device-height" => Some(h),
@@ -361,6 +375,16 @@ fn number(values: &[C], feature: &str) -> Option<f64> {
     }
 }
 fn media_feature(values: &[C]) -> bool {
+    media_feature_at(values, None)
+}
+fn media_feature_at(values: &[C], size: Option<(f64, f64)>) -> bool {
+    let actual = |name: &str| actual_at(name, size);
+    let (width, height) = size.unwrap_or_else(|| {
+        (
+            crate::style::viewport::WIDTH.get(),
+            crate::style::viewport::HEIGHT.get(),
+        )
+    });
     let values = syntax::trim(values);
     let colon = syntax::split(values, &T::Colon);
     if colon.len() == 2 {
@@ -377,14 +401,8 @@ fn media_feature(values: &[C]) -> bool {
                 let v = v.to_ascii_lowercase();
                 return match name.as_str() {
                     "orientation" => match v.as_str() {
-                        "landscape" => {
-                            crate::style::viewport::WIDTH.get()
-                                > crate::style::viewport::HEIGHT.get()
-                        }
-                        "portrait" => {
-                            crate::style::viewport::WIDTH.get()
-                                <= crate::style::viewport::HEIGHT.get()
-                        }
+                        "landscape" => width > height,
+                        "portrait" => width <= height,
                         _ => false,
                     },
                     "prefers-color-scheme" => v == "light",
