@@ -84,3 +84,21 @@ fn page_commands_resolve_paths_execute_scripts_and_write_png() {
     assert_eq!(u32::from_be_bytes(png[20..24].try_into().unwrap()), 60);
     assert!(String::from_utf8_lossy(&shot.stderr).contains("console: ready"));
 }
+
+#[test]
+fn screenshot_reports_write_failure_and_check_reports_load_failure() {
+    let workspace = Workspace::new();
+    let shot = workspace.run(&[
+        "shot",
+        "data:text/html,<title>write failure</title><p>hello</p>",
+        "missing-directory/page.png",
+        "40x30",
+    ]);
+    assert_eq!(shot.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&shot.stderr).contains("write missing-directory/page.png:"));
+    assert!(!workspace.0.join("missing-directory").exists());
+    let check = workspace.run(&["check", "missing.html"]);
+    assert_eq!(check.status.code(), Some(1));
+    assert!(check.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("file://"));
+}

@@ -32,6 +32,12 @@ stage needs, or introduce a callback/trait boundary when host behavior is requir
 `PseudoState` and the JavaScript runtime hooks are existing examples of that
 separation. Exact crate dependencies live in their Cargo manifests.
 
+## Automation
+
+The [CI/CD guide](ci-cd.md) describes GitHub Actions validation, debug/release test
+runs, workflow linting, release packaging, and version-tag publication. The tested
+Rust toolchain is pinned in `rust-toolchain.toml`.
+
 ## Build and inspect
 
 ```bash
@@ -63,13 +69,13 @@ change. The standard validation commands are:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --offline
+cargo clippy --workspace --all-targets --offline -- -D warnings
 cargo test --workspace --offline
 ```
 
-The repository currently has Clippy warnings. A successful invocation does not
-mean every lint is clean, and `-D warnings` is not the existing baseline. Assess
-new diagnostics introduced by the change and keep unrelated cleanup separate.
+Clippy warnings are treated as errors across the workspace and all targets.
+Resolve new diagnostics in the relevant implementation instead of suppressing
+the lint; keep the documented command clean when extending the project.
 
 Examples of focused runs:
 

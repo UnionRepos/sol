@@ -1,5 +1,7 @@
 # sol — a self-contained browser kernel in Rust
 
+[![CI](https://github.com/UnionRepos/sol/actions/workflows/ci.yml/badge.svg)](https://github.com/UnionRepos/sol/actions/workflows/ci.yml)
+
 `sol` is a browser kernel with in-tree HTML, CSS, layout, JavaScript, DOM,
 and image codecs. Networking and font rendering use maintained Rust libraries:
 `ureq`/rustls for HTTP and HTTPS, `flate2` for HTTP deflate, `owned_ttf_parser`
@@ -17,6 +19,7 @@ fetch → HTML parse → CSS cascade → layout → display list → raster → 
 |---|---|
 | [Building, commands, and embedding](docs/usage.md) | First build, exact command behavior, exit codes, remote viewing, runnable Rust examples |
 | [Architecture and design rationale](docs/architecture.md) | Ownership, page lifecycle, execution order, module boundaries, caching, rendering geometry |
+| [Continuous integration and delivery](docs/ci-cd.md) | Validation gates, release archives, manual runs, version-tag publication |
 | [Development and maintenance](docs/development.md) | Source navigation, focused tests, fixtures, extension invariants, comment conventions |
 | [Supported behavior and budgets](docs/limits.md) | Allocation limits, implemented subsets, state-lifetime constraints, diagnosis |
 
@@ -146,7 +149,7 @@ Try it: `sol shot demo/page.html out.png 1000x640`
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --offline
+cargo clippy --workspace --all-targets --offline -- -D warnings
 cargo test --workspace --offline
 ```
 
@@ -174,6 +177,9 @@ has a checked-in PNG baseline. Review intentional changes visually, then update:
 ```bash
 SOL_UPDATE_SCREENSHOTS=1 cargo test -p sol_paint --test paint rounded_transform_screenshot_matches_fixture --offline
 ```
+
+CI runs the suite in both debug and release profiles. Version tags build and
+publish tested Linux archives; see [CI/CD](docs/ci-cd.md) for the release process.
 
 ## Known limits
 

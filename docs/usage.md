@@ -6,8 +6,9 @@
 ## Requirements and first build
 
 Run commands from the repository root. You need Cargo and a Rust toolchain capable
-of building the versions in `Cargo.lock`; the workspace uses the Rust 2021 edition
-and does not declare a minimum supported Rust version. The initial build needs
+of building the versions in `Cargo.lock`; rustup selects the tested compiler from
+`rust-toolchain.toml`. The workspace uses the Rust 2021 edition and does not declare
+a minimum supported Rust version. The initial build needs
 access to the locked dependencies unless they are already cached.
 
 No graphical desktop or external browser is required. The text crate includes
